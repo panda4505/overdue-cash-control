@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+import httpx
 
 from app.config import get_settings
 from app.database import engine
@@ -13,7 +14,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS — allow frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL, "http://localhost:3000"],
@@ -25,7 +25,6 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
-    """Health check with database connectivity test."""
     db_status = "disconnected"
     try:
         async with engine.connect() as conn:
@@ -44,3 +43,23 @@ async def health_check():
 @app.get("/")
 async def root():
     return {"message": "Overdue Cash Control API", "docs": "/docs"}
+
+
+@app.get("/test-email")
+async def test_email():
+    """Send a test email via Resend. Remove this endpoint after testing."""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": "Overdue Cash Control <noreply@overduecash.com>",
+                "to": "lorenzo.massimo.pandolfo@gmail.com",
+                "subject": "Test — Overdue Cash Control is alive",
+                "html": "<h1>It works!</h1><p>Outbound email from overduecash.com is working.</p>",
+            },
+        )
+    return {"status": response.status_code, "body": response.json()}

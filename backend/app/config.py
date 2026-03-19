@@ -10,9 +10,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
 
-    # Email
-    POSTMARK_SERVER_TOKEN: str = ""
-    POSTMARK_INBOUND_WEBHOOK_SECRET: str = ""
+    # Email (Resend)
+    RESEND_API_KEY: str = ""
 
     # Auth
     SECRET_KEY: str = "dev-secret-change-in-production"
