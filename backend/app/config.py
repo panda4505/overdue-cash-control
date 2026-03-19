@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     # Email (Resend)
     RESEND_API_KEY: str = ""
+    RESEND_WEBHOOK_SECRET: str = ""
 
     # Auth
     SECRET_KEY: str = "dev-secret-change-in-production"
