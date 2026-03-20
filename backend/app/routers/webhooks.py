@@ -45,7 +45,7 @@ async def resend_inbound_webhook(request: Request):
     # Step 1: Call Attachments API to get download URLs
     async with httpx.AsyncClient() as client:
         list_resp = await client.get(
-            f"https://api.resend.com/emails/{email_id}/attachments",
+            f"https://api.resend.com/emails/receiving/{email_id}/attachments",
             headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
         )
 
