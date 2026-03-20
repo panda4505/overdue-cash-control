@@ -11,7 +11,7 @@
 - **Product:** Overdue Cash Control — collections workflow for EU SMBs
 - **Builder:** Lorenzo (founder, tester, decision-maker)
 - **AI engineer:** Codex in VS Code (code writing) + Claude (architecture, planning, reviews)
-- **Stack:** Python/FastAPI backend, Next.js frontend, PostgreSQL on Railway, OpenAI + DeepSeek LLM, Postmark email
+- **Stack:** Python/FastAPI backend, Next.js frontend, PostgreSQL on Railway, OpenAI + DeepSeek LLM, Resend email
 - **Repo:** https://github.com/panda4505/overdue-cash-control
 
 ---
@@ -19,10 +19,10 @@
 ## Current State
 
 - **Milestone:** 1 of 12 — Architecture & Stack Lock
-- **Sub-task:** Postmark setup + email flow
-- **Status:** FastAPI backend is live on Railway with PostgreSQL connected; Next.js frontend is live; `/health` returns `{"status":"ok","db":"connected","version":"0.1.0"}`
-- **Blockers:** Postmark account not yet created, so inbound/outbound email work has not started
-- **Last session:** 2026-03-19
+- **Sub-task:** Architecture doc + sample AR file collection (last two exit gate items)
+- **Status:** 6 of 8 Milestone 1 exit gates passed. Backend, frontend, PostgreSQL, outbound email, and inbound webhook with attachment download all live and proven. Remaining: architecture doc in docs/ and 3+ real AR export files in sample-data/.
+- **Blockers:** None for M1 exit gate. Webhook signature verification and attachment persistence are open bugs carried into M2.
+- **Last session:** 2026-03-20
 
 ---
 
@@ -30,12 +30,13 @@
 
 ```
 backend/
-  app/main.py           — FastAPI app, /, /health endpoint, CORS
-  app/config.py         — pydantic-settings, env var loading
+  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook router
+  app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
   app/models/__init__.py — models package placeholder
-  app/routers/__init__.py — routers package placeholder
+  app/routers/webhooks.py — Resend inbound webhook, attachment listing + download logging
+  app/routers/__init__.py — routers package marker
   app/utils/__init__.py — utils package placeholder
   app/__init__.py       — app package marker
   app/services/__init__.py — services package marker
@@ -71,6 +72,15 @@ README.md               — project overview
 
 ## Session History
 
+### Session 2 — 2026-03-20
+- Switched email provider settings from Postmark to Resend in `backend/app/config.py`
+- Added `GET /test-email` in `backend/app/main.py` to send outbound mail through `https://api.resend.com/emails`
+- Added `POST /webhooks/resend/inbound` in `backend/app/routers/webhooks.py` and mounted the router in `backend/app/main.py`
+- Implemented attachment lookup via `GET /emails/receiving/{email_id}/attachments` and download logging in `backend/app/routers/webhooks.py`
+- Fixed an incorrect Resend attachments API path during live debugging and added `print(...)` logging for Railway visibility
+- No automated tests were added this session; validation was manual through live outbound/webhook debugging
+- **Next:** Verify Resend webhook signatures, persist/parse downloaded attachments, and remove or secure the public `/test-email` endpoint
+
 ### Session 1 — 2026-03-19
 - Created GitHub repo and pushed Milestone 1 commits
 - Generated backend scaffold in `backend/` (`app/main.py`, `app/config.py`, `app/database.py`, `app/services/llm_client.py`, Alembic config)
@@ -94,12 +104,15 @@ README.md               — project overview
 | 5 | Auth deferred to M10 | Simple JWT for now, proper auth later | 2026-03-19 |
 | 6 | Codex in VS Code for code writing | GPT-5.4, agent mode, direct file editing | 2026-03-19 |
 | 7 | Next.js App Router frontend | Fastest path to a minimal web UI that can deploy cleanly alongside the FastAPI backend on Railway | 2026-03-19 |
+| 8 | Switched email provider from Postmark to Resend | Faster path to a working inbound webhook and outbound test flow during Milestone 1; Resend was simpler to debug live on Railway | 2026-03-20 |
 
 ---
 
 ## Open Bugs
 
-(none yet)
+- `backend/app/routers/webhooks.py` — `RESEND_WEBHOOK_SECRET` exists in config but the inbound webhook does not verify webhook signatures yet. Repro: `POST /webhooks/resend/inbound` with `{"type":"email.received","data":{...}}`. Severity: High.
+- `backend/app/main.py` — `GET /test-email` is publicly reachable on the live backend and hardcodes `lorenzo.massimo.pandolfo@gmail.com` as the recipient. Repro: call `/test-email`. Severity: Medium.
+- `backend/app/routers/webhooks.py` — inbound attachments are downloaded in memory and logged, but not persisted to disk, object storage, or the database. Repro: send an inbound email with an attachment; the bytes are discarded after the request completes. Severity: Medium.
 
 ---
 
@@ -110,12 +123,12 @@ README.md               — project overview
 | GitHub repo | ✅ Created | https://github.com/panda4505/overdue-cash-control |
 | Railway project | ✅ Created | Backend + frontend services are live |
 | Railway PostgreSQL | ✅ Connected | Attached to backend; `/health` reports `db=connected` |
-| Backend deploy | ✅ Live | Railway URL not recorded in this log yet |
-| Frontend deploy | ✅ Live | Railway URL not recorded in this log yet |
+| Backend deploy | ✅ Live | https://overdue-cash-control-production.up.railway.app |
+| Frontend deploy | ✅ Live | https://noble-possibility-production.up.railway.app |
 | OpenAI API key | ⬜ Not added | — |
 | DeepSeek API key | ⬜ Not added | — |
-| Postmark account | ⬜ Not started | Next session task |
-| Product domain | ⬜ Deferred | Using Railway URLs for now |
+| Resend account | ✅ Created | Domain overduecash.com verified, inbound receiving via tuaentoocl.resend.app |
+| Product domain | ✅ Registered | overduecash.com on Cloudflare, DNS verified by Resend |
 
 ---
 
@@ -125,8 +138,8 @@ README.md               — project overview
 > - [x] Backend deployed to Railway, /health returns {"status":"ok","db":"connected"}
 > - [x] Frontend deployed to Railway, page loads
 > - [x] PostgreSQL provisioned and connected
-> - [ ] Postmark inbound webhook receives email + extracts attachment
-> - [ ] Postmark outbound sends from custom domain, arrives in inbox (not spam)
+> - [x] Resend inbound webhook receives email + extracts attachment — tested and confirmed: email to test@tuaentoocl.resend.app triggers POST to /webhooks/resend/inbound, Attachments API returns 200, CSV downloaded (911 bytes logged in Railway)
+> - [x] Resend outbound sends from custom domain, arrives in inbox (not spam) — tested and confirmed: /test-email sends from noreply@overduecash.com via Resend API, arrived in Gmail inbox (not spam)
 > - [ ] At least 3 real AR export files in sample-data/
 > - [ ] Architecture doc committed to docs/
 > - [x] This build log is accurate and current
