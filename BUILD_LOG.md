@@ -18,10 +18,10 @@
 
 ## Current State
 
-- **Milestone:** 1 of 12 — Architecture & Stack Lock
-- **Sub-task:** Architecture doc + sample AR file collection (last two exit gate items)
-- **Status:** 6 of 8 Milestone 1 exit gates passed. Backend, frontend, PostgreSQL, outbound email, and inbound webhook with attachment download all live and proven. Remaining: architecture doc in docs/ and 3+ real AR export files in sample-data/.
-- **Blockers:** None for M1 exit gate. Webhook signature verification and attachment persistence are open bugs carried into M2.
+- **Milestone:** 1 of 12 — Architecture & Stack Lock — COMPLETE
+- **Sub-task:** None — milestone complete, ready for M2
+- **Status:** All 8 exit gates passed. Backend, frontend, PostgreSQL, outbound email, inbound webhook, architecture doc, sample data, and build log all done.
+- **Blockers:** None. Open bugs (webhook signature verification, /test-email exposure, attachment persistence) carry into M2.
 - **Last session:** 2026-03-20
 
 ---
@@ -60,9 +60,12 @@ frontend/
   tailwind.config.ts    — Tailwind config
   tsconfig.json         — TypeScript config
 docs/
-  .gitkeep              — placeholder; architecture doc still pending
+  architecture.md       — full stack and design decisions
 sample-data/
-  .gitkeep              — placeholder; need 3+ real AR exports
+  pohoda_ar_export.csv   — semicolon-delimited, Czech headers, DD.MM.YYYY dates, 15 invoices
+  fakturoid_ar_export.csv — comma-delimited, English headers, ISO dates, EUR, 15 invoices
+  messy_generic_export.csv — Czech headers, messy data, missing fields, Czech number formatting, 12 invoices
+  README.md              — documents every edge case for ingestion testing
 BUILD_LOG.md            — this file
 README.md               — project overview
 .gitignore              — Python + Node + env files
@@ -71,6 +74,15 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 3 — 2026-03-20
+- Added architecture decision doc to `docs/architecture.md` (stack, project structure, Railway architecture, LLM design, email architecture, data flow, security model, design principles)
+- Created 3 synthetic AR export test files in `sample-data/`: `pohoda_ar_export.csv` (Czech/semicolon), `fakturoid_ar_export.csv` (English/comma/EUR), `messy_generic_export.csv` (messy Czech data with missing fields and inconsistent formatting)
+- Added `sample-data/README.md` documenting all edge cases the ingestion engine must handle
+- Removed `sample-data/*.csv` from `.gitignore` so synthetic test files can be committed
+- Corrected build log: Current State blockers and sub-task, exit gate checkboxes, Accounts & URLs
+- **Milestone 1 is now COMPLETE — all 8 exit gates passed**
+- **Next:** Begin Milestone 2 — Ingestion Engine (upload-first). First task: define database models for Invoice, Customer, ImportRecord, ImportTemplate, Activity.
 
 ### Session 2 — 2026-03-20
 - Switched email provider settings from Postmark to Resend in `backend/app/config.py`
@@ -140,8 +152,8 @@ README.md               — project overview
 > - [x] PostgreSQL provisioned and connected
 > - [x] Resend inbound webhook receives email + extracts attachment — tested and confirmed: email to test@tuaentoocl.resend.app triggers POST to /webhooks/resend/inbound, Attachments API returns 200, CSV downloaded (911 bytes logged in Railway)
 > - [x] Resend outbound sends from custom domain, arrives in inbox (not spam) — tested and confirmed: /test-email sends from noreply@overduecash.com via Resend API, arrived in Gmail inbox (not spam)
-> - [ ] At least 3 real AR export files in sample-data/
-> - [ ] Architecture doc committed to docs/
+> - [x] 3 synthetic AR export test files in sample-data/ (pohoda, fakturoid, messy generic) with edge case documentation
+> - [x] docs/architecture.md committed
 > - [x] This build log is accurate and current
 
 ---
