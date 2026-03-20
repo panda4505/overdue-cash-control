@@ -1,0 +1,16 @@
+Číslo faktury;Odběratel;IČO;Datum vystavení;Datum splatnosti;Celkem s DPH;Měna;Zbývá uhradit;Email
+FV-2026-0001;ACME s.r.o.;12345678;01.01.2026;15.01.2026;45000.00;CZK;45000.00;fakturace@acme.cz
+FV-2026-0002;Beta Trading s.r.o.;87654321;05.01.2026;20.01.2026;12500.00;CZK;12500.00;info@betatrading.cz
+FV-2026-0003;ACME s.r.o.;12345678;10.01.2026;25.01.2026;8900.00;CZK;8900.00;fakturace@acme.cz
+FV-2026-0004;Gamma Logistics a.s.;11223344;12.01.2026;27.01.2026;156000.00;CZK;78000.00;accounting@gammalog.cz
+FV-2026-0005;Delta Stavby s.r.o.;55667788;15.01.2026;30.01.2026;34200.00;CZK;34200.00;office@deltastavby.cz
+FV-2026-0006;Epsilon Tech s.r.o.;99887766;18.01.2026;02.02.2026;67800.00;CZK;67800.00;billing@epsilontech.cz
+FV-2026-0007;Beta Trading s.r.o.;87654321;20.01.2026;04.02.2026;9100.00;CZK;9100.00;info@betatrading.cz
+FV-2026-0008;Zeta Cleaning s.r.o.;33445566;22.01.2026;06.02.2026;18500.00;CZK;18500.00;admin@zetacleaning.cz
+FV-2026-0009;ACME SRO;12345678;25.01.2026;09.02.2026;22000.00;CZK;22000.00;fakturace@acme.cz
+FV-2026-0010;Eta Transport s.r.o.;77889900;28.01.2026;12.02.2026;93000.00;CZK;93000.00;finance@etatransport.cz
+FV-2026-0011;Gamma Logistics a.s.;11223344;01.02.2026;16.02.2026;45000.00;CZK;45000.00;accounting@gammalog.cz
+FV-2026-0012;Theta Packaging s.r.o.;22334455;03.02.2026;18.02.2026;28700.00;CZK;28700.00;objednavky@thetapack.cz
+FV-2026-0013;Delta Stavby s.r.o.;55667788;05.02.2026;20.02.2026;51000.00;CZK;51000.00;office@deltastavby.cz
+FV-2026-0014;Iota Services s.r.o.;66778899;08.02.2026;23.02.2026;15300.00;CZK;15300.00;info@iotaservices.cz
+FV-2026-0015;Kappa Supplies s.r.o.;44556677;10.02.2026;25.02.2026;72000.00;CZK;0.00;orders@kappasupplies.cz

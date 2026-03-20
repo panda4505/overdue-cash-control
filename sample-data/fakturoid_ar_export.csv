@@ -1,0 +1,16 @@
+Invoice Number,Client Name,Client Email,Issue Date,Due Date,Total Amount,Currency,Amount Due,Status
+INV-20260101,ACME Czech s.r.o.,fakturace@acme.cz,2026-01-03,2026-01-18,1250.00,EUR,1250.00,overdue
+INV-20260102,Müller GmbH,buchhaltung@muller.de,2026-01-05,2026-01-20,3400.00,EUR,3400.00,overdue
+INV-20260103,Dubois SAS,comptabilite@dubois.fr,2026-01-08,2026-01-23,890.00,EUR,890.00,overdue
+INV-20260104,ACME Czech s.r.o.,fakturace@acme.cz,2026-01-10,2026-01-25,2100.00,EUR,2100.00,overdue
+INV-20260105,Schmidt & Söhne KG,info@schmidtsohne.at,2026-01-12,2026-01-27,5600.00,EUR,2800.00,partial
+INV-20260106,Novák Stavebniny s.r.o.,faktury@novakstav.cz,2026-01-15,2026-01-30,780.00,EUR,780.00,overdue
+INV-20260107,Müller GmbH,buchhaltung@muller.de,2026-01-18,2026-02-02,1900.00,EUR,1900.00,overdue
+INV-20260108,Rossi Logistics SRL,admin@rossilog.it,2026-01-20,2026-02-04,4200.00,EUR,4200.00,overdue
+INV-20260109,Dubois SAS,comptabilite@dubois.fr,2026-01-22,2026-02-06,1350.00,EUR,1350.00,overdue
+INV-20260110,ACME Czech sro,fakturace@acme.cz,2026-01-25,2026-02-09,3800.00,EUR,3800.00,overdue
+INV-20260111,García Transportes SL,contabilidad@garciatrans.es,2026-01-28,2026-02-12,6700.00,EUR,6700.00,overdue
+INV-20260112,Schmidt & Söhne KG,info@schmidtsohne.at,2026-02-01,2026-02-16,2300.00,EUR,2300.00,overdue
+INV-20260113,Novák Stavebniny s.r.o.,faktury@novakstav.cz,2026-02-03,2026-02-18,950.00,EUR,950.00,overdue
+INV-20260114,Kowalski Sp. z o.o.,biuro@kowalski.pl,2026-02-05,2026-02-20,1800.00,EUR,1800.00,overdue
+INV-20260115,Müller GmbH,buchhaltung@muller.de,2026-02-08,2026-02-23,4100.00,EUR,0.00,paid

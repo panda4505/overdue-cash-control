@@ -27,8 +27,3 @@ out/
 # OS
 .DS_Store
 Thumbs.db
-
-# Sample data (don't commit real client data)
-sample-data/*.csv
-sample-data/*.xlsx
-sample-data/*.xls
