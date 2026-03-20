@@ -9,9 +9,10 @@ from app.config import get_settings
 from app.database import Base
 
 # Import all models so Alembic can detect them
-# from app.models.account import Account  # uncomment as models are created
-# from app.models.invoice import Invoice
-# from app.models.customer import Customer
+from app.models import (  # noqa: F401
+    Account, User, Customer, Invoice,
+    ImportRecord, ImportTemplate, Activity,
+)
 
 config = context.config
 settings = get_settings()
