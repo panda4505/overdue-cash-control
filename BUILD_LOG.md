@@ -18,10 +18,10 @@
 
 ## Current State
 
-- **Milestone:** 1 of 12 — Architecture & Stack Lock — COMPLETE
-- **Sub-task:** None — milestone complete, ready for M2
-- **Status:** All 8 exit gates passed. Backend, frontend, PostgreSQL, outbound email, inbound webhook, architecture doc, sample data, and build log all done.
-- **Blockers:** None. Open bugs (webhook signature verification, /test-email exposure, attachment persistence) carry into M2.
+- **Milestone:** 2 of 12 — Ingestion Engine (upload-first)
+- **Sub-task:** File parsing engine — CSV/XLSX parser with encoding detection
+- **Status:** All 7 database tables created and migrated to production PostgreSQL (accounts, users, customers, invoices, import_records, import_templates, activities). Ready to build the parsing and column mapping logic.
+- **Blockers:** None
 - **Last session:** 2026-03-20
 
 ---
@@ -34,13 +34,21 @@ backend/
   app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
-  app/models/__init__.py — models package placeholder
+  app/models/__init__.py  — imports all 7 models for Alembic
+  app/models/account.py   — Account (company using the product)
+  app/models/user.py      — User (person logging in, separate for future multi-user)
+  app/models/customer.py  — Customer (debtor, with fuzzy match fields + merge_history JSONB)
+  app/models/invoice.py   — Invoice (core record, 8 statuses, recovery tracking, data lineage, 4 composite indexes)
+  app/models/import_record.py — ImportRecord (full audit trail, change_set JSONB for rollback, cost tracking)
+  app/models/import_template.py — ImportTemplate (saved column mappings, format hints, usage counter)
+  app/models/activity.py  — Activity (timeline of all events, flexible JSONB details, 4 indexes)
   app/routers/webhooks.py — Resend inbound webhook, attachment listing + download logging
   app/routers/__init__.py — routers package marker
   app/utils/__init__.py — utils package placeholder
   app/__init__.py       — app package marker
   app/services/__init__.py — services package marker
-  alembic/env.py        — async migration runner
+  alembic/versions/4a129036b96f_create_all_tables.py — initial migration creating all 7 tables
+  alembic/env.py        — updated to import all models for autogenerate
   alembic/script.py.mako — Alembic revision template
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
@@ -74,6 +82,16 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 4 — 2026-03-20
+- Designed and created 7 SQLAlchemy models: Account, User, Customer, Invoice, ImportRecord, ImportTemplate, Activity
+- Key design decisions: separated User from Account for future multi-user; added soft deletes on Customer and Invoice; added data lineage fields (first_seen_import_id, last_updated_import_id); added recovery tracking (recovery_confirmed_at, recovery_import_id); added cost/performance tracking on ImportRecord (parse_duration_ms, mapping_method, llm_tokens_used); added activation signals on Account (first_import_at, last_import_at, total_recovered_amount); added merge_history JSONB on Customer for auditable fuzzy matching
+- Set up local Python venv, installed dependencies, upgraded SQLAlchemy from 2.0.36 to 2.0.48 (Python 3.14 compatibility fix)
+- Generated Alembic migration and applied it to production Railway PostgreSQL — all 7 tables and indexes created
+- Updated requirements.txt to pin sqlalchemy==2.0.48
+- Caught stale `.env.example` still referencing Postmark — updated to Resend variables
+- Updated exit gate section: marked M1 complete, added M2 exit gate criteria from trajectory
+- **Next:** Build the file parsing engine (CSV/XLSX with encoding detection, delimiter detection, header row detection) and the deterministic column mapper
 
 ### Session 3 — 2026-03-20
 - Added architecture decision doc to `docs/architecture.md` (stack, project structure, Railway architecture, LLM design, email architecture, data flow, security model, design principles)
@@ -117,6 +135,10 @@ README.md               — project overview
 | 6 | Codex in VS Code for code writing | GPT-5.4, agent mode, direct file editing | 2026-03-19 |
 | 7 | Next.js App Router frontend | Fastest path to a minimal web UI that can deploy cleanly alongside the FastAPI backend on Railway | 2026-03-19 |
 | 8 | Switched email provider from Postmark to Resend | Faster path to a working inbound webhook and outbound test flow during Milestone 1; Resend was simpler to debug live on Railway | 2026-03-20 |
+| 9 | Separated User from Account tables | Prevents painful migration when multi-user arrives post-launch; costs one extra table now vs risky data migration later | 2026-03-20 |
+| 10 | SQLAlchemy 2.0.48 (upgraded from 2.0.36) | Python 3.14 compatibility — 2.0.36 had a Union type bug with 3.14 | 2026-03-20 |
+| 11 | Soft deletes on Invoice and Customer | Financial data should never be hard-deleted; nullable deleted_at column | 2026-03-20 |
+| 12 | JSONB for change_set, merge_history, activity details | Flexibility without creating dozens of tables; sufficient for v1, can normalize later if needed | 2026-03-20 |
 
 ---
 
@@ -146,15 +168,16 @@ README.md               — project overview
 
 ## Current Milestone Exit Gate
 
-> **Milestone 1 is done when:**
-> - [x] Backend deployed to Railway, /health returns {"status":"ok","db":"connected"}
-> - [x] Frontend deployed to Railway, page loads
-> - [x] PostgreSQL provisioned and connected
-> - [x] Resend inbound webhook receives email + extracts attachment — tested and confirmed: email to test@tuaentoocl.resend.app triggers POST to /webhooks/resend/inbound, Attachments API returns 200, CSV downloaded (911 bytes logged in Railway)
-> - [x] Resend outbound sends from custom domain, arrives in inbox (not spam) — tested and confirmed: /test-email sends from noreply@overduecash.com via Resend API, arrived in Gmail inbox (not spam)
-> - [x] 3 synthetic AR export test files in sample-data/ (pohoda, fakturoid, messy generic) with edge case documentation
-> - [x] docs/architecture.md committed
-> - [x] This build log is accurate and current
+> **Milestone 1: COMPLETE** — all 8/8 exit gates passed on 2026-03-20.
+>
+> **Milestone 2 is done when:**
+> - [ ] Files parse correctly: CSV (comma and semicolon delimited) and XLSX
+> - [ ] Encoding detection works (UTF-8, Windows-1250, ISO-8859-2)
+> - [ ] Column mapping works deterministically for known formats and falls back to LLM for unknown ones
+> - [ ] At least 5 real-world export formats parse correctly (3 synthetic samples + 2 more during M2)
+> - [ ] Email ingestion wrapper feeds attachments into the same pipeline as manual upload
+> - [ ] Manual upload endpoint accepts CSV/XLSX and returns parsed results
+> - [ ] Both ingestion paths produce identical results for the same file
 
 ---
 
