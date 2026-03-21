@@ -22,7 +22,7 @@
 - **Sub-task:** File parsing engine — CSV/XLSX parser with encoding detection
 - **Status:** All 7 database tables created and migrated to production PostgreSQL (accounts, users, customers, invoices, import_records, import_templates, activities). Ready to build the parsing and column mapping logic.
 - **Blockers:** None
-- **Last session:** 2026-03-20
+- **Last session:** 2026-03-21
 
 ---
 
@@ -86,6 +86,13 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 5 — 2026-03-21
+- Cross-document consistency review with Claude (architecture, planning). GPT-5.4 used as second reviewer.
+- Fixed 20+ inconsistencies across all 6 docs: milestone count (10 not 12), auth milestone references, deferred entity milestone numbers, Import Preview missing from trajectory M4 build order, email provider history note, pilot invoice threshold raised to 50+, constitution companion docs completed, sample-data label corrected, data flow milestone label removed, upload-first engineering vs UX clarification added, build log git instruction clarified
+- Codex caught 2 additional stale "12 milestones" references during grep verification
+- No code changes. Docs only.
+- **Next:** Build the file parsing engine (CSV/XLSX with encoding detection, delimiter detection, header row detection) — first sub-task of Milestone 2
 
 ### Session 4 — 2026-03-20
 - Designed and created 7 SQLAlchemy models: Account, User, Customer, Invoice, ImportRecord, ImportTemplate, Activity
