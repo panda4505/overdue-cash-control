@@ -19,8 +19,8 @@
 ## Current State
 
 - **Milestone:** 2 of 10 — Ingestion Engine (upload-first)
-- **Sub-task:** Column mapper — deterministic matching + LLM fallback
-- **Status:** File parser complete (74 tests passing). FR/IT fixtures added. ImportTemplate schema migrated to production. Ready to build column mapping logic.
+- **Sub-task:** Upload + email ingestion endpoints (connect parser+mapper to HTTP routes)
+- **Status:** File parser (74 tests) and column mapper (48 tests) complete. 6-language deterministic dictionary maps all 5 fixtures without LLM. Template validation, LLM fallback, and conflict resolution all tested. Ready to build the upload endpoint and email ingestion wrapper.
 - **Blockers:** None
 - **Last session:** 2026-03-21
 
@@ -35,6 +35,7 @@ backend/
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
   app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback, pure-integer ID protection.
+  app/services/column_mapper.py — Column mapper with 6-language deterministic dictionary (FR/IT/EN/CZ/DE/ES), template validation with normalized comparison + always-enrich, async LLM fallback with hallucination protection. 14 canonical fields (12 core, 2 auxiliary). 48 tests.
   app/models/__init__.py  — imports all 7 models for Alembic
   app/models/account.py   — Account (company using the product)
   app/models/user.py      — User (person logging in, separate for future multi-user)
@@ -55,6 +56,7 @@ backend/
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
   tests/test_file_parser.py   — 74 tests covering 5 fixtures + inline edge cases (comma+dot, plain dot, ID protection, .xls rejection, empty file, header-only, TSV)
+  tests/test_column_mapper.py — 48 tests: 5 fixture mappings (all deterministic, LLM patched to verify never called), template validation + enrichment, mocked LLM fallback, hallucination rejection, conflict resolution, amount fallback, type-compatible candidate preference, partial-match guard, success=False on zero mappings.
   Dockerfile            — Python 3.12 slim backend image for Railway
   railway.toml          — Railway deploy config
   requirements.txt      — all backend deps
@@ -91,6 +93,20 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 7 — 2026-03-21
+- Built the column mapper service: async mapper with three matching strategies — saved template validation, deterministic dictionary, and LLM fallback
+- 6-language deterministic dictionary (FR/IT/EN/CZ/DE/ES) with ~150 aliases across 14 canonical fields. All 5 fixtures map fully without LLM.
+- Template path: validates `{target_field: source_column}` mapping against normalized headers, rejects duplicate source assignments, always enriches optional fields via deterministic matching after template application
+- Deterministic matching: exact (1.0) → synonym (0.9) → partial (0.7, restricted to headers with ≥3 tokens and ≥60% bidirectional overlap). Dangerous standalone aliases removed (company, balance, remaining, mail, correo, contact, reference)
+- LLM fallback: triggers when required fields unmapped or confidence < 0.6. Validates response — rejects hallucinated source columns and unknown target fields, clamps confidence, deduplicates. LLM cannot override deterministic matches ≥ 0.7
+- Conflict resolution: one source → one target, one target → one source, conflicts recorded with winner/loser/confidence. Type-compatible candidate preferred over incompatible at equal confidence
+- Amount fallback: when only gross_amount is mapped, `amount_fallback_active=True` signals downstream. gross_amount confidence used as stand-in in required-field average
+- 14 canonical fields split into core (12, stored in DB) and auxiliary (2: status, contact_name — preview-only)
+- Surgical fix applied after initial implementation: changed `success` from hardcoded True to `bool(mappings)`, narrowed `_is_hard_mismatch()` to only numeric→date and string→numeric, added 7 targeted tests for untested code paths
+- Mapper design and surgical fix were reviewed before implementation to catch dictionary, template, and type-mismatch risks early
+- Final state: 48 tests passing (41 original + 7 from surgical fix)
+- **Next:** Build manual upload endpoint (`POST /upload`) and wire email webhook to feed attachments through the parser→mapper pipeline. Both paths must produce identical results for the same file.
 
 ### Session 6 — 2026-03-21
 - Built `backend/app/services/file_parser.py`: CSV/XLSX parser with encoding detection (chardet + Western European priority fallback), delimiter detection (Sniffer + consistency scoring), header row detection (scoring heuristic), and format-shaped numeric/date type inference
@@ -209,7 +225,7 @@ README.md               — project overview
 > - [ ] XLSX files parse correctly — implemented but not yet validated with a real XLSX fixture
 > - [x] Encoding detection works for UTF-8 and Windows-1252 — verified by pohoda/fakturoid/messy/italian (UTF-8) and french (Windows-1252) fixtures
 > - [ ] Encoding detection works for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2 — implemented as fallbacks but not yet proven by fixture
-> - [ ] Column mapping works deterministically for known formats and falls back to LLM for unknown ones
+> - [x] Column mapping works deterministically for known formats and falls back to LLM for unknown ones — verified across 5 fixtures spanning CZ/EN/FR/IT, LLM path tested with mocked provider, 48 tests
 > - [ ] At least 5 export formats parse correctly — validated with 5 synthetic fixtures; real customer exports still needed during pilot
 > - [ ] Email ingestion wrapper feeds attachments into the same pipeline as manual upload
 > - [ ] Manual upload endpoint accepts CSV/XLSX and returns parsed results
