@@ -349,6 +349,37 @@ class TestTemplateApplication:
         assert result.success is True
         assert result.method != "template"
 
+    @pytest.mark.asyncio
+    async def test_template_duplicate_source_rejected(self):
+        template = {
+            "invoice_number": "Číslo faktury",
+            "customer_name": "Číslo faktury",
+            "due_date": "Datum splatnosti",
+            "outstanding_amount": "Zbývá uhradit",
+        }
+        result = await map_columns(self.parse_result, existing_mapping=template)
+        assert result.success is True
+        assert result.method == "deterministic"
+        assert any(
+            "same source column" in warning.lower() or "duplicate" in warning.lower()
+            for warning in result.warnings
+        )
+
+    @pytest.mark.asyncio
+    async def test_template_matches_despite_accent_case_differences(self):
+        template = {
+            "invoice_number": "CISLO FAKTURY",
+            "customer_name": "odberatel",
+            "due_date": "Datum Splatnosti",
+        }
+        result = await map_columns(self.parse_result, existing_mapping=template)
+        assert result.success is True
+        assert result.method in {"template", "mixed"}
+        field_to_source = {m.target_field: m.source_column for m in result.mappings}
+        assert field_to_source["invoice_number"] == "Číslo faktury"
+        assert field_to_source["customer_name"] == "Odběratel"
+        assert field_to_source["due_date"] == "Datum splatnosti"
+
 
 class TestLLMFallback:
     """Test LLM fallback with mocked llm_complete()."""
@@ -397,14 +428,14 @@ class TestLLMFallback:
     async def test_llm_failure_falls_back_gracefully(self):
         import pandas as pd
 
-        df = pd.DataFrame({"Col_X": ["INV-001"], "Col_Y": ["ACME"]})
+        df = pd.DataFrame({"Invoice Number": ["INV-001"], "Col_Y": ["ACME"]})
         parse_result = ParseResult(
             success=True,
             filename="unknown.csv",
             headers=list(df.columns),
             dataframe=df,
             total_rows=1,
-            column_types={"Col_X": "string", "Col_Y": "string"},
+            column_types={"Invoice Number": "string", "Col_Y": "string"},
         )
 
         with patch(
@@ -420,14 +451,14 @@ class TestLLMFallback:
     async def test_llm_bad_json_handled(self):
         import pandas as pd
 
-        df = pd.DataFrame({"Col_A": ["test"]})
+        df = pd.DataFrame({"Invoice Number": ["INV-001"], "Col_A": ["test"]})
         parse_result = ParseResult(
             success=True,
             filename="unknown.csv",
-            headers=["Col_A"],
+            headers=list(df.columns),
             dataframe=df,
             total_rows=1,
-            column_types={"Col_A": "string"},
+            column_types={"Invoice Number": "string", "Col_A": "string"},
         )
 
         with patch(
@@ -480,6 +511,97 @@ class TestLLMFallback:
             result = await map_columns(parse_result)
             field_to_source = {m.target_field: m.source_column for m in result.mappings}
             assert field_to_source.get("invoice_number") == "Invoice Number"
+
+    @pytest.mark.asyncio
+    async def test_llm_hallucinated_source_column_ignored(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "Col_A": ["INV-001"],
+                "Col_B": ["ACME"],
+                "Col_C": ["2026-01-15"],
+                "Col_D": ["1000.00"],
+            }
+        )
+        parse_result = ParseResult(
+            success=True,
+            filename="unknown.csv",
+            headers=list(df.columns),
+            dataframe=df,
+            total_rows=1,
+            column_types={
+                "Col_A": "string",
+                "Col_B": "string",
+                "Col_C": "date",
+                "Col_D": "numeric",
+            },
+        )
+
+        mock_response = (
+            '{"Phantom_Column": {"field": "notes", "confidence": 0.9}, '
+            '"Col_A": {"field": "invoice_number", "confidence": 0.9}, '
+            '"Col_B": {"field": "customer_name", "confidence": 0.85}, '
+            '"Col_C": {"field": "due_date", "confidence": 0.9}, '
+            '"Col_D": {"field": "outstanding_amount", "confidence": 0.8}}'
+        )
+
+        with patch(
+            "app.services.column_mapper.llm_complete",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await map_columns(parse_result)
+            assert result.success is True
+            assert all(mapping.source_column != "Phantom_Column" for mapping in result.mappings)
+            assert any("Phantom_Column" in warning for warning in result.warnings)
+            field_to_source = {m.target_field: m.source_column for m in result.mappings}
+            assert field_to_source.get("invoice_number") == "Col_A"
+            assert field_to_source.get("customer_name") == "Col_B"
+
+    @pytest.mark.asyncio
+    async def test_llm_hallucinated_target_field_ignored(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "Col_A": ["INV-001"],
+                "Col_B": ["ACME"],
+                "Col_C": ["2026-01-15"],
+                "Col_D": ["1000.00"],
+            }
+        )
+        parse_result = ParseResult(
+            success=True,
+            filename="unknown.csv",
+            headers=list(df.columns),
+            dataframe=df,
+            total_rows=1,
+            column_types={
+                "Col_A": "string",
+                "Col_B": "string",
+                "Col_C": "date",
+                "Col_D": "numeric",
+            },
+        )
+
+        mock_response = (
+            '{"Col_A": {"field": "magic_field", "confidence": 0.9}, '
+            '"Col_B": {"field": "customer_name", "confidence": 0.85}, '
+            '"Col_C": {"field": "due_date", "confidence": 0.9}, '
+            '"Col_D": {"field": "outstanding_amount", "confidence": 0.8}}'
+        )
+
+        with patch(
+            "app.services.column_mapper.llm_complete",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await map_columns(parse_result)
+            assert all(mapping.target_field != "magic_field" for mapping in result.mappings)
+            assert any("magic_field" in warning for warning in result.warnings)
+            field_to_source = {m.target_field: m.source_column for m in result.mappings}
+            assert field_to_source.get("customer_name") == "Col_B"
 
 
 class TestConflictsAndEdgeCases:
@@ -663,3 +785,84 @@ class TestConflictsAndEdgeCases:
         field_to_source = {m.target_field: m.source_column for m in result.mappings}
         assert field_to_source.get("gross_amount") == "Total Amount"
         assert field_to_source.get("outstanding_amount") == "Amount Due"
+
+    @pytest.mark.asyncio
+    async def test_partial_matching_blocked_for_short_headers(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"Facture": ["FA-001"], "Nom": ["ACME"]})
+        parse_result = ParseResult(
+            success=True,
+            filename="short_headers.csv",
+            headers=list(df.columns),
+            dataframe=df,
+            total_rows=1,
+            column_types={"Facture": "string", "Nom": "string"},
+        )
+
+        with patch("app.services.column_mapper.llm_complete", new_callable=AsyncMock, return_value="{}"):
+            result = await map_columns(parse_result)
+            mapped_sources = {mapping.source_column for mapping in result.mappings}
+            assert "Facture" not in mapped_sources
+            assert "Nom" not in mapped_sources
+            assert "Facture" in result.unmapped_source_columns
+            assert "Nom" in result.unmapped_source_columns
+
+    @pytest.mark.asyncio
+    async def test_type_compatible_candidate_preferred(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "Invoice Number": ["INV-001"],
+                "Customer": ["ACME"],
+                "Date Due": ["2026-01-15"],
+                "Payment Due": ["soon"],
+                "Amount Due": ["1000.00"],
+            }
+        )
+        parse_result = ParseResult(
+            success=True,
+            filename="type_preference.csv",
+            headers=list(df.columns),
+            dataframe=df,
+            total_rows=1,
+            column_types={
+                "Invoice Number": "string",
+                "Customer": "string",
+                "Date Due": "date",
+                "Payment Due": "string",
+                "Amount Due": "numeric",
+            },
+        )
+
+        with patch("app.services.column_mapper.llm_complete", new_callable=AsyncMock, return_value="{}"):
+            result = await map_columns(parse_result)
+            field_to_source = {m.target_field: m.source_column for m in result.mappings}
+            assert field_to_source.get("due_date") == "Date Due"
+            conflict = next(c for c in result.conflicts if c.target_field == "due_date")
+            assert conflict.loser == "Payment Due"
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_zero_deterministic_returns_failure(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"Xxx": ["a"], "Yyy": ["b"], "Zzz": ["c"]})
+        parse_result = ParseResult(
+            success=True,
+            filename="zero_matches.csv",
+            headers=list(df.columns),
+            dataframe=df,
+            total_rows=1,
+            column_types={"Xxx": "string", "Yyy": "string", "Zzz": "string"},
+        )
+
+        with patch(
+            "app.services.column_mapper.llm_complete",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("All LLM providers failed"),
+        ):
+            result = await map_columns(parse_result)
+            assert result.success is False
+            assert result.mappings == []
+            assert any("LLM fallback failed" in warning for warning in result.warnings)

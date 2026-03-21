@@ -394,7 +394,13 @@ def _add_warning(warnings: list[str], message: str) -> None:
 
 
 def _is_hard_mismatch(expected_type: str, detected_type: str) -> bool:
-    return expected_type in {"date", "numeric"} and detected_type != expected_type
+    """True only for clearly wrong cross-type mappings."""
+
+    if expected_type == "date" and detected_type == "numeric":
+        return True
+    if expected_type == "numeric" and detected_type == "string":
+        return True
+    return False
 
 
 def _type_compatible(target_field: str, detected_type: str | None) -> bool:
@@ -924,7 +930,7 @@ def _assemble_result(
     ]
 
     return MappingResult(
-        success=True,
+        success=bool(mappings),
         mappings=sorted(
             mappings,
             key=lambda mapping: parse_result.headers.index(mapping.source_column),
