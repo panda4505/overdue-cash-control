@@ -71,6 +71,7 @@ docs/
   architecture.md       — full stack and design decisions
   constitution.md       — governing principles, decision filter, beachhead definition, pricing, exclusions
   product-definition.md — screen-by-screen UX, data model (aligned with actual build), engine specs, deferred entities marked
+  trajectory.md         — 12 milestones from architecture to launch, aligned with actual build (M1 marked complete, Codex/Claude dual model, Resend, OpenAI/DeepSeek)
 sample-data/
   pohoda_ar_export.csv   — semicolon-delimited, Czech headers, DD.MM.YYYY dates, 15 invoices
   fakturoid_ar_export.csv — comma-delimited, English headers, ISO dates, EUR, 15 invoices
@@ -190,7 +191,7 @@ The full product spec lives in these docs (paste relevant sections when needed, 
 - **Product constitution** (`docs/constitution.md`) — governing principles, decision filter, beachhead definition, pricing, exclusions
 - **Wedge definition v1** — what the product does and doesn't do
 - **Product definition** (`docs/product-definition.md`) — screen-by-screen UX, data model, ingestion/reconciliation/escalation engine specs. Aligned with actual build as of M2 start.
-- **Build trajectory** — all 12 milestones, session plans, exit gates
+- **Build trajectory** (`docs/trajectory.md`) — 12 milestones, session plans, exit gates, risk register. Aligned with actual build as of M2 start.
 - **Buyer analysis** — harsh buyer assessment with pricing signals, shared during M1 close-out
 
 ---
