@@ -33,6 +33,60 @@ class IngestionResult:
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert IngestionResult to a JSON-serializable dict."""
+
+        mapping_data = None
+        if self.mapping:
+            mapping_data = {
+                "success": self.mapping.success,
+                "mappings": [
+                    {
+                        "source_column": mapping.source_column,
+                        "target_field": mapping.target_field,
+                        "confidence": mapping.confidence,
+                        "method": mapping.method,
+                        "tier": mapping.tier,
+                    }
+                    for mapping in self.mapping.mappings
+                ],
+                "unmapped_source_columns": self.mapping.unmapped_source_columns,
+                "unmapped_required_fields": self.mapping.unmapped_required_fields,
+                "amount_fallback_active": self.mapping.amount_fallback_active,
+                "conflicts": [
+                    {
+                        "target_field": conflict.target_field,
+                        "winner": conflict.winner,
+                        "loser": conflict.loser,
+                        "winner_confidence": conflict.winner_confidence,
+                        "loser_confidence": conflict.loser_confidence,
+                    }
+                    for conflict in self.mapping.conflicts
+                ],
+                "overall_confidence": self.mapping.overall_confidence,
+                "method": self.mapping.method,
+            }
+
+        return {
+            "success": self.success,
+            "filename": self.filename,
+            "file_hash": self.file_hash,
+            "file_size_bytes": self.file_size_bytes,
+            "encoding": self.encoding,
+            "delimiter": self.delimiter,
+            "date_format": self.date_format,
+            "decimal_separator": self.decimal_separator,
+            "thousands_separator": self.thousands_separator,
+            "total_rows": self.total_rows,
+            "mapping": mapping_data,
+            "sample_rows": self.sample_rows,
+            "sheet_name": self.sheet_name,
+            "sheet_names": self.sheet_names,
+            "method": self.method,
+            "warnings": self.warnings,
+            "error": self.error,
+        }
+
 
 def _serialize_value(value: Any) -> Any:
     """Convert a value to a JSON-safe type."""

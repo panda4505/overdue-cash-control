@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Request, Response
 
 from app.config import get_settings
+from app.services.ingestion import ingest_file
 
 settings = get_settings()
 
@@ -42,6 +43,8 @@ async def resend_inbound_webhook(request: Request):
         return {"status": "received", "email_id": email_id, "attachments_count": 0}
 
     # Step 1: Call Attachments API to get download URLs
+    results = []
+    skipped = []
     async with httpx.AsyncClient() as client:
         list_resp = await client.get(
             f"https://api.resend.com/emails/receiving/{email_id}/attachments",
@@ -67,11 +70,35 @@ async def resend_inbound_webhook(request: Request):
                 if dl_resp.status_code == 200:
                     content = dl_resp.content
                     print(f"  Downloaded {filename}: {len(content)} bytes")
+                    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                    if extension not in {"csv", "tsv", "xlsx"}:
+                        skipped.append(
+                            {
+                                "filename": filename,
+                                "reason": f"Unsupported file type: .{extension}",
+                            }
+                        )
+                        continue
+
+                    result = await ingest_file(
+                        file_bytes=content,
+                        filename=filename,
+                        method="email",
+                    )
+                    results.append(result.to_dict())
                 else:
                     print(f"  Failed to download {filename}: {dl_resp.status_code}")
+                    skipped.append(
+                        {
+                            "filename": filename,
+                            "reason": f"Download failed: {dl_resp.status_code}",
+                        }
+                    )
 
     return {
         "status": "received",
         "email_id": email_id,
-        "attachments_count": len(attachments),
+        "attachments_processed": len(results),
+        "attachments_skipped": skipped,
+        "results": results,
     }
