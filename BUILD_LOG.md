@@ -91,6 +91,7 @@ README.md               — project overview
 - Updated requirements.txt to pin sqlalchemy==2.0.48
 - Caught stale `.env.example` still referencing Postmark — updated to Resend variables
 - Updated exit gate section: marked M1 complete, added M2 exit gate criteria from trajectory
+- Added OPENAI_API_KEY and DEEPSEEK_API_KEY to Railway backend environment variables — all M1 infrastructure accounts now complete
 - **Next:** Build the file parsing engine (CSV/XLSX with encoding detection, delimiter detection, header row detection) and the deterministic column mapper
 
 ### Session 3 — 2026-03-20
@@ -159,8 +160,8 @@ README.md               — project overview
 | Railway PostgreSQL | ✅ Connected | Attached to backend; `/health` reports `db=connected` |
 | Backend deploy | ✅ Live | https://overdue-cash-control-production.up.railway.app |
 | Frontend deploy | ✅ Live | https://noble-possibility-production.up.railway.app |
-| OpenAI API key | ⬜ Not added | — |
-| DeepSeek API key | ⬜ Not added | — |
+| OpenAI API key | ✅ Added | Configured in Railway backend variables |
+| DeepSeek API key | ✅ Added | Configured in Railway backend variables |
 | Resend account | ✅ Created | Domain overduecash.com verified, inbound receiving via tuaentoocl.resend.app |
 | Product domain | ✅ Registered | overduecash.com on Cloudflare, DNS verified by Resend |
 
