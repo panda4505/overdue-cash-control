@@ -239,6 +239,42 @@ class TestWebhookEndpoint:
         assert "Download failed" in data["attachments_skipped"][0]["reason"]
 
     @pytest.mark.asyncio
+    async def test_webhook_handles_missing_download_url(self):
+        attachments_payload = {
+            "data": [
+                {
+                    "filename": "invoice.csv",
+                    "download_url": None,
+                    "content_type": "text/csv",
+                }
+            ]
+        }
+
+        async def mock_get(self, url, *args, **kwargs):
+            if url == "https://api.resend.com/emails/receiving/test-email-123/attachments":
+                return MockResponse(
+                    status_code=200,
+                    json_data=attachments_payload,
+                    text=json.dumps(attachments_payload),
+                )
+            raise AssertionError(f"Unexpected URL requested: {url}")
+
+        transport = ASGITransport(app=app)
+        with patch("httpx.AsyncClient.get", new=mock_get):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/webhooks/resend/inbound",
+                    json=_make_webhook_payload(attachments_meta=[{"filename": "invoice.csv"}]),
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["attachments_processed"] == 0
+        assert len(data["attachments_skipped"]) == 1
+        assert data["attachments_skipped"][0]["filename"] == "invoice.csv"
+        assert "No download URL" in data["attachments_skipped"][0]["reason"]
+
+    @pytest.mark.asyncio
     async def test_webhook_multiple_attachments_mixed(self):
         pohoda_bytes = _read_fixture("pohoda_ar_export.csv")
         french_bytes = _read_fixture("french_ar_export.csv")

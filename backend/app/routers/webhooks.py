@@ -94,6 +94,14 @@ async def resend_inbound_webhook(request: Request):
                             "reason": f"Download failed: {dl_resp.status_code}",
                         }
                     )
+            else:
+                print(f"  No download URL for {filename}, skipping.")
+                skipped.append(
+                    {
+                        "filename": filename,
+                        "reason": "No download URL provided",
+                    }
+                )
 
     return {
         "status": "received",
