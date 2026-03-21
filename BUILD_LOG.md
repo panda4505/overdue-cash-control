@@ -143,7 +143,7 @@ README.md               — project overview
 | 2 | OpenAI primary, DeepSeek fallback | OpenAI for quality, DeepSeek for cost/redundancy | 2026-03-19 |
 | 3 | Postmark for inbound + outbound email | One provider, best deliverability | 2026-03-19 |
 | 4 | Railway for all hosting | Zero DevOps, managed PostgreSQL | 2026-03-19 |
-| 5 | Auth deferred to M10 | Simple JWT for now, proper auth later | 2026-03-19 |
+| 5 | Simple auth in M4, hardening in M8 | Email+password with bcrypt + JWT in M4 (Core UI). Auth hardening (verification, rate limiting, data isolation) in M8 (Security & Trust). | 2026-03-19 |
 | 6 | Codex in VS Code for code writing | GPT-5.4, agent mode, direct file editing | 2026-03-19 |
 | 7 | Next.js App Router frontend | Fastest path to a minimal web UI that can deploy cleanly alongside the FastAPI backend on Railway | 2026-03-19 |
 | 8 | Switched email provider from Postmark to Resend | Faster path to a working inbound webhook and outbound test flow during Milestone 1; Resend was simpler to debug live on Railway | 2026-03-20 |
