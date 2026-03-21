@@ -385,3 +385,106 @@ class TestEdgeCases:
         assert result.success is True
         assert result.column_types["RegNumber"] == "string"
         assert result.column_types["ID"] == "string"
+
+
+class TestGermanXLSX:
+    """Tests for the German XLSX fixture."""
+
+    def setup_method(self):
+        self.result = parse_file(
+            (SAMPLE_DIR / "german_ar_export.xlsx").read_bytes(),
+            "german_ar_export.xlsx",
+        )
+
+    def test_parses_successfully(self):
+        assert self.result.success is True
+
+    def test_selects_correct_sheet(self):
+        assert self.result.sheet_name == "Rechnungen"
+        assert len(self.result.sheet_names) == 2
+        assert "Zusammenfassung" in self.result.sheet_names
+
+    def test_finds_all_rows(self):
+        assert self.result.total_rows == 10
+
+    def test_finds_german_headers(self):
+        assert "Rechnungsnummer" in self.result.headers
+        assert "Kundenname" in self.result.headers
+        assert "Fälligkeitsdatum" in self.result.headers
+        assert "Offener Betrag" in self.result.headers
+        assert "Bruttobetrag" in self.result.headers
+
+    def test_detects_date_columns(self):
+        assert (
+            self.result.column_types["Rechnungsdatum"] == "date"
+            or self.result.column_types["Fälligkeitsdatum"] == "date"
+        )
+
+    def test_detects_numeric_columns(self):
+        assert self.result.column_types["Bruttobetrag"] == "numeric"
+        assert self.result.column_types["Offener Betrag"] == "numeric"
+
+    def test_handles_dot_comma_numbers(self):
+        df = self.result.dataframe
+        assert df.iloc[0]["Bruttobetrag"] == 45000.0
+
+    def test_paid_invoice_has_zero(self):
+        df = self.result.dataframe
+        paid_row = df[df["Rechnungsnummer"] == "RE-2026-003"].iloc[0]
+        assert paid_row["Offener Betrag"] == 0.0
+
+
+class TestEncodingFallback:
+    """Prove the encoding fallback chain handles non-UTF-8 encodings."""
+
+    def test_windows_1250_czech(self):
+        content = (
+            "Číslo faktury;Odběratel;Částka\n"
+            "FA-001;Příliš žluťoučký kůň;1.234,56\n"
+            "FA-002;Řeřicha s.r.o.;0,00\n"
+            "FA-003;Šťastná čtvrť;9.876,54\n"
+        ).encode("windows-1250")
+        result = parse_file(content, "windows_1250_czech.csv")
+        assert result.success is True
+        assert result.total_rows == 3
+        assert "Číslo faktury" in result.headers
+        assert result.dataframe.iloc[1]["Odběratel"] == "Řeřicha s.r.o."
+
+    def test_iso_8859_1_german(self):
+        content = (
+            "Rechnungsnummer;Kundename;Fälligkeitsdatum;Betrag\n"
+            "RE-001;Müller GmbH;14.02.2026;1.234,56\n"
+            "RE-002;Böhm AG;28.02.2026;0,00\n"
+            "RE-003;Grünwald e.K.;15.03.2026;9.876,54\n"
+        ).encode("iso-8859-1")
+        result = parse_file(content, "iso_8859_1_german.csv")
+        assert result.success is True
+        assert result.total_rows == 3
+        assert "Fälligkeitsdatum" in result.headers
+        assert result.dataframe.iloc[0]["Kundename"] == "Müller GmbH"
+
+    def test_iso_8859_15_french_euro(self):
+        content = (
+            "Numéro;Client;Montant €\n"
+            "FA-001;Électricité Dupont;1 234,56 €\n"
+            "FA-002;Société Générale;0,00 €\n"
+            "FA-003;Crème Brûlée SARL;9 876,54 €\n"
+        ).encode("iso-8859-15")
+        result = parse_file(content, "iso_8859_15_french.csv")
+        assert result.success is True
+        assert result.total_rows == 3
+        assert "Montant €" in result.headers
+        assert result.dataframe.iloc[0]["Client"] == "Électricité Dupont"
+
+    def test_iso_8859_2_czech(self):
+        content = (
+            "Číslo;Firma;Částka\n"
+            "FA-001;Příliš žluťoučký kůň;1.234,56\n"
+            "FA-002;Šárka s.r.o.;0,00\n"
+            "FA-003;Červená řeka;9.876,54\n"
+        ).encode("iso-8859-2")
+        result = parse_file(content, "iso_8859_2_czech.csv")
+        assert result.success is True
+        assert result.total_rows == 3
+        assert "Číslo" in result.headers
+        assert result.dataframe.iloc[1]["Firma"] == "Šárka s.r.o."

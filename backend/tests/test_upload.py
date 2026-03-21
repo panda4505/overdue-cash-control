@@ -67,6 +67,29 @@ class TestUploadEndpoint:
         assert data["thousands_separator"] == "."
 
     @pytest.mark.asyncio
+    async def test_upload_xlsx_succeeds(self):
+        file_bytes = _read_fixture("german_ar_export.xlsx")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/upload",
+                files={
+                    "file": (
+                        "german_ar_export.xlsx",
+                        file_bytes,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["total_rows"] == 10
+        assert data["mapping"] is not None
+        assert data["mapping"]["success"] is True
+        assert data["sheet_name"] == "Rechnungen"
+
+    @pytest.mark.asyncio
     async def test_upload_unsupported_file_type(self):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

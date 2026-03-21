@@ -216,7 +216,15 @@ def _detect_encoding(file_bytes: bytes) -> tuple[str, str]:
             continue
         seen.add(normalized)
         try:
-            return encoding, file_bytes.decode(encoding)
+            decoded_text = file_bytes.decode(encoding)
+            if any(
+                (ord(char) < 32 and char not in "\n\r\t")
+                or 127 <= ord(char) <= 159
+                or char in "¤©¹»¾"
+                for char in decoded_text
+            ):
+                continue
+            return encoding, decoded_text
         except UnicodeDecodeError:
             continue
 

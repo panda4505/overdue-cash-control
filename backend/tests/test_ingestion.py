@@ -47,6 +47,18 @@ class TestIngestionService:
         assert result.thousands_separator == "."
 
     @pytest.mark.asyncio
+    async def test_german_xlsx_ingestion_succeeds(self):
+        file_bytes = _read_fixture("german_ar_export.xlsx")
+        result = await ingest_file(file_bytes, "german_ar_export.xlsx")
+        assert result.success is True
+        assert result.total_rows == 10
+        assert result.mapping is not None
+        assert result.mapping.success is True
+        assert result.sheet_name == "Rechnungen"
+        assert len(result.sample_rows) > 0
+        assert result.method == "upload"
+
+    @pytest.mark.asyncio
     async def test_file_hash_is_sha256(self):
         file_bytes = _read_fixture("pohoda_ar_export.csv")
         expected_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -147,8 +159,8 @@ class TestIngestionService:
         assert any("NONEXISTENT" in warning for warning in result.warnings)
 
     @pytest.mark.asyncio
-    async def test_all_five_fixtures_ingest_successfully(self):
-        """Smoke test: all 5 fixtures should ingest without errors."""
+    async def test_all_fixtures_ingest_successfully(self):
+        """Smoke test: all 6 fixtures should ingest without errors."""
 
         fixtures = [
             "pohoda_ar_export.csv",
@@ -156,6 +168,7 @@ class TestIngestionService:
             "messy_generic_export.csv",
             "french_ar_export.csv",
             "italian_ar_export.csv",
+            "german_ar_export.xlsx",
         ]
         for fixture in fixtures:
             file_bytes = _read_fixture(fixture)
