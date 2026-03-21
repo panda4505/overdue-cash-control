@@ -140,9 +140,9 @@ per week on build sessions and testing.
                                                            initialised, hello
                                                            world deployed
 
-  2        Ingestion engine     2--3 weeks     **BUILD**   Emails arrive, files
-                                                           parse, invoices land in
-                                                           DB
+  2        Ingestion engine     1 day          **BUILD**   Upload/email ingestion
+                                                           preview works, CSV/XLSX
+                                                           parse, parity proven
 
   3        Reconciliation & AI  1--2 weeks     **BUILD**   Fuzzy matching, diff
            layer                                           engine, anomaly flags
