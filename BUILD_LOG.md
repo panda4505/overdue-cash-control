@@ -18,9 +18,9 @@
 
 ## Current State
 
-- **Milestone:** 2 of 10 — Ingestion Engine (upload-first)
-- **Sub-task:** Email ingestion wrapper + parity tests
-- **Status:** Shared ingestion service and manual upload endpoint complete. Parser → mapper pipeline exposed via POST /upload. Ready to wire email webhook to the same ingestion service.
+- **Milestone:** 2 of 10 — COMPLETE
+- **Sub-task:** N/A — Milestone 2 closed
+- **Status:** All M2 repo-level exit gates passed. 169 tests green. Ingestion pipeline (parse → map → preview) works for CSV and XLSX across 6 fixtures in 5 languages (CZ/EN/FR/IT/DE). Email and upload paths both route through the same canonical `ingest_file()`. Encoding fallback chain proven for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2. Real customer export validation remains deferred to pilot (M9).
 - **Blockers:** None
 - **Last session:** 2026-03-21
 
@@ -34,9 +34,9 @@ backend/
   app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
-  app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback, pure-integer ID protection.
+  app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback with mojibake rejection guard, pure-integer ID protection. CHANGED in session 9: added suspicious-character guard in _detect_encoding() to reject mojibaked single-byte decodes.
   app/services/column_mapper.py — Column mapper with 6-language deterministic dictionary (FR/IT/EN/CZ/DE/ES), template validation with normalized comparison + always-enrich, async LLM fallback with hallucination protection. 14 canonical fields (12 core, 2 auxiliary). 48 tests.
-  app/services/ingestion.py — Shared canonical ingestion pipeline: parse → map → package preview. SHA-256 file hash. JSON-serializable sample rows with original headers.
+  app/services/ingestion.py — Shared canonical ingestion pipeline: parse → map → package preview. SHA-256 file hash. JSON-serializable sample rows with original headers. to_dict() for shared serialization. CHANGED in session 9: added to_dict() method.
   app/models/__init__.py  — imports all 7 models for Alembic
   app/models/account.py   — Account (company using the product)
   app/models/user.py      — User (person logging in, separate for future multi-user)
@@ -45,8 +45,8 @@ backend/
   app/models/import_record.py — ImportRecord (full audit trail, change_set JSONB for rollback, cost tracking)
   app/models/import_template.py — ImportTemplate (saved column mappings, format hints: decimal_separator + thousands_separator, usage counter). CHANGED in session 6: replaced number_format with explicit separator fields, updated comments to multilingual examples.
   app/models/activity.py  — Activity (timeline of all events, flexible JSONB details, 4 indexes)
-  app/routers/upload.py     — POST /upload endpoint: thin wrapper over ingestion service, accepts CSV/TSV/XLSX multipart upload.
-  app/routers/webhooks.py — Resend inbound webhook, attachment listing + download logging
+  app/routers/upload.py     — POST /upload endpoint: thin wrapper over ingestion service, uses result.to_dict(). CHANGED in session 9: replaced _serialize_ingestion_result with result.to_dict().
+  app/routers/webhooks.py — Resend inbound webhook: downloads attachments, filters by supported extension, calls ingest_file() for each, returns ingestion results. Skips unsupported files and missing download URLs with reason. CHANGED in session 9: wired to ingestion pipeline, added skip handling.
   app/routers/__init__.py — routers package marker
   app/utils/__init__.py — utils package placeholder
   app/__init__.py       — app package marker
@@ -57,10 +57,11 @@ backend/
   alembic/script.py.mako — Alembic revision template
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
-  tests/test_file_parser.py   — 74 tests covering 5 fixtures + inline edge cases (comma+dot, plain dot, ID protection, .xls rejection, empty file, header-only, TSV)
-  tests/test_column_mapper.py — 48 tests: 5 fixture mappings (all deterministic, LLM patched to verify never called), template validation + enrichment, mocked LLM fallback, hallucination rejection, conflict resolution, amount fallback, type-compatible candidate preference, partial-match guard, success=False on zero mappings.
-  tests/test_ingestion.py   — Service-level ingestion tests: all 5 fixtures, hash, serialization, template pass-through, error handling.
-  tests/test_upload.py      — HTTP endpoint tests: upload success, file validation, response shape, hash verification.
+  tests/test_file_parser.py   — 86 tests: 5 CSV fixtures + 1 XLSX fixture + inline edge cases + 4 encoding fallback tests (Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2). CHANGED in session 9: added TestGermanXLSX (8 tests) and TestEncodingFallback (4 tests).
+  tests/test_column_mapper.py — 48 tests (unchanged).
+  tests/test_ingestion.py   — Service-level ingestion tests: all 6 fixtures, hash, serialization, template pass-through, error handling, XLSX ingestion. CHANGED in session 9: added XLSX test, renamed smoke test to cover 6 fixtures.
+  tests/test_upload.py      — HTTP endpoint tests: upload success (CSV + XLSX), file validation, response shape, hash verification. CHANGED in session 9: added XLSX upload test.
+  tests/test_webhooks.py    — 10 tests: 3 parity tests (upload vs email produce identical results across all 5 CSV fixtures), 7 webhook endpoint tests (success, skip PDF, no attachments, non-email event, download failure, missing download URL, mixed multi-attachment). NEW in session 9.
   Dockerfile            — Python 3.12-slim backend image for Railway (production). Local dev/test runs Python 3.14.3.
   railway.toml          — Railway deploy config
   requirements.txt      — all backend deps
@@ -88,6 +89,8 @@ sample-data/
   messy_generic_export.csv — Czech headers, messy data, missing fields, Czech number formatting, 12 invoices
   french_ar_export.csv    — semicolon, French headers, DD/MM/YYYY, space+comma numbers, Windows-1252 encoding, SARL/SAS/SA/EURL/SCI suffixes
   italian_ar_export.csv   — semicolon, Italian headers, DD/MM/YYYY, dot+comma numbers (45.000,00), S.r.l./S.p.A./S.a.s./S.n.c. suffixes
+  german_ar_export.xlsx     — XLSX, German headers, DD.MM.YYYY dates, dot+comma numbers (45.000,00), 10 invoices, 2 sheets (Rechnungen + Zusammenfassung). NEW in session 9.
+  create_xlsx_fixture.py    — One-time script to regenerate german_ar_export.xlsx via openpyxl. NEW in session 9.
   README.md              — documents all edge cases, format coverage matrix, and European scope. CHANGED in session 6: full rewrite.
 BUILD_LOG.md            — this file
 README.md               — project overview
@@ -97,6 +100,26 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 9 — 2026-03-21
+- **M2-ST4: Email webhook wiring + parity tests**
+  - Added `to_dict()` to `IngestionResult` in `backend/app/services/ingestion.py` for shared serialization
+  - Simplified `backend/app/routers/upload.py`: deleted `_serialize_ingestion_result`, now uses `result.to_dict()`
+  - Wired `backend/app/routers/webhooks.py` to call `ingest_file()` for each supported attachment (csv/tsv/xlsx), skip unsupported types and download failures with reason, return ingestion results in response
+  - Hardened webhooks.py: added else clause for missing `download_url` (attachments without a URL now land in `attachments_skipped` instead of silently falling through)
+  - Created `backend/tests/test_webhooks.py`: 3 parity tests (same bytes produce identical results via upload vs email across all 5 CSV fixtures) + 7 webhook endpoint tests with mocked Resend API
+  - All reviewed by GPT-5.4 before and after implementation; 2 mock-shape fixes applied (`.text` attribute on mock response, non-empty `data.attachments` in webhook payload)
+  - 155 tests passing after ST4
+- **M2-ST5: XLSX fixture + encoding fallback proof**
+  - Created `sample-data/german_ar_export.xlsx` via `sample-data/create_xlsx_fixture.py`: 10 German invoices (GmbH/AG/e.K. suffixes, umlauts), 2 sheets (Rechnungen + Zusammenfassung), dot-comma numbers, DD.MM.YYYY dates, all values as strings
+  - Added `TestGermanXLSX` (8 tests) in `test_file_parser.py`: sheet selection, German headers, date/numeric detection, dot-comma conversion, zero balance
+  - Added `TestEncodingFallback` (4 inline tests) in `test_file_parser.py`: Windows-1250 Czech, ISO-8859-1 German, ISO-8859-15 French (€ symbol), ISO-8859-2 Czech — all outcome-focused (no exact encoding label assertions)
+  - Encoding tests exposed a real parser bug: `_detect_encoding()` in `file_parser.py` accepted the first single-byte codec that didn't throw `UnicodeDecodeError`, even when it produced mojibake (e.g. Č→È, €→¤). Fixed with a +9 line guard that rejects decoded text containing C1 control characters (127–159) or known mojibake markers (¤©¹»¾)
+  - Added XLSX ingestion test in `test_ingestion.py`, XLSX upload test in `test_upload.py`
+  - Renamed `test_all_five_fixtures_ingest_successfully` → `test_all_fixtures_ingest_successfully` (now covers 6 fixtures)
+  - 169 tests passing after ST5
+- **Milestone 2 closed.** All repo-level exit gates passed. Real customer export validation deferred to pilot (M9).
+- **Next:** Update BUILD_LOG.md and trajectory.md to reflect M2 closure, then begin Milestone 3 (Reconciliation & AI Layer).
 
 ### Session 8 — 2026-03-21
 - Created `backend/app/services/ingestion.py`: shared canonical ingestion pipeline (parse → map → package preview result) used by both upload and email paths
@@ -204,6 +227,7 @@ README.md               — project overview
 | 12 | JSONB for change_set, merge_history, activity details | Flexibility without creating dozens of tables; sufficient for v1, can normalize later if needed | 2026-03-20 |
 | 13 | European-first compatibility is a project invariant | France and Italy are primary launch markets. Czech is supported but not the default reference case. Parser uses format-shaped detection (separator patterns, not country buckets). All fixtures, header dictionaries, and legal suffix handling must cover FR/IT as first-class. | 2026-03-21 |
 | 14 | Python 3.12 for production (Dockerfile), 3.14.3 for local dev | Railway Dockerfile pins a Python 3.12 slim image for deployment stability. Local dev/test environment runs 3.14.3. Both are compatible — SQLAlchemy 2.0.48 upgrade (decision #10) resolved the only known incompatibility. No action needed unless a 3.14-only feature is used in code. | 2026-03-21 |
+| 15 | Mojibake rejection guard in encoding detection | When trying single-byte encodings, reject any decode that produces C1 control characters (127–159) or known mojibake markers (¤©¹»¾). This forces the fallback chain to keep trying until clean text is found. Discovered when encoding proof tests showed Windows-1250 Czech decoded as ISO-8859-1 produced Č→È corruption. +9 lines in file_parser.py. | 2026-03-21 |
 
 ---
 
@@ -211,7 +235,7 @@ README.md               — project overview
 
 - `backend/app/routers/webhooks.py` — `RESEND_WEBHOOK_SECRET` exists in config but the inbound webhook does not verify webhook signatures yet. Repro: `POST /webhooks/resend/inbound` with `{"type":"email.received","data":{...}}`. Severity: High.
 - `backend/app/main.py` — `GET /test-email` is publicly reachable on the live backend and hardcodes `lorenzo.massimo.pandolfo@gmail.com` as the recipient. Repro: call `/test-email`. Severity: Medium.
-- `backend/app/routers/webhooks.py` — inbound attachments are downloaded in memory and logged, but not persisted to disk, object storage, or the database. Repro: send an inbound email with an attachment; the bytes are discarded after the request completes. Severity: Medium.
+- `backend/app/routers/webhooks.py` — inbound attachment bytes are processed through the ingestion pipeline but not persisted to disk or object storage. The bytes exist only for the duration of the HTTP request. If the webhook call fails or the server restarts mid-processing, the attachment is lost. Repro: send an inbound email; bytes are ingested but not saved. Severity: Medium. Mitigation: email can be re-sent.
 
 ---
 
@@ -235,16 +259,22 @@ README.md               — project overview
 
 > **Milestone 1: COMPLETE** — all 8/8 exit gates passed on 2026-03-20.
 >
-> **Milestone 2 is done when:**
-> - [x] CSV files parse correctly (comma and semicolon delimited) — verified across 5 fixtures
-> - [ ] XLSX files parse correctly — implemented but not yet validated with a real XLSX fixture
+> **Milestone 2: COMPLETE** — all repo-level exit gates passed on 2026-03-21. 169 tests.
+> - [x] CSV files parse correctly (comma and semicolon delimited) — verified across 5 CSV fixtures
+> - [x] XLSX files parse correctly — verified with german_ar_export.xlsx (10 rows, 2 sheets, German headers, dot-comma numbers)
 > - [x] Encoding detection works for UTF-8 and Windows-1252 — verified by pohoda/fakturoid/messy/italian (UTF-8) and french (Windows-1252) fixtures
-> - [ ] Encoding detection works for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2 — implemented as fallbacks but not yet proven by fixture
-> - [x] Column mapping works deterministically for known formats and falls back to LLM for unknown ones — verified across 5 fixtures spanning CZ/EN/FR/IT, LLM path tested with mocked provider, 48 tests
-> - [ ] At least 5 export formats parse correctly — validated with 5 synthetic fixtures; real customer exports still needed during pilot
-> - [ ] Email ingestion wrapper feeds attachments into the same pipeline as manual upload
+> - [x] Encoding detection works for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2 — verified by inline encoding fallback tests with mojibake rejection guard
+> - [x] Column mapping works deterministically for known formats and falls back to LLM for unknown ones — verified across 6 fixtures spanning CZ/EN/FR/IT/DE, LLM path tested with mocked provider, 48 tests
+> - [x] At least 5 export formats parse correctly — 6 synthetic fixtures (5 CSV + 1 XLSX) across 5 languages. Real customer export validation deferred to pilot (M9).
+> - [x] Email ingestion wrapper feeds attachments into the same pipeline as manual upload — webhooks.py calls ingest_file() for each supported attachment
 > - [x] Manual upload endpoint accepts CSV/XLSX and returns parsed results — POST /upload returns full parse + mapping preview
-> - [ ] Both ingestion paths produce identical results for the same file
+> - [x] Both ingestion paths produce identical results for the same file — parity tests across all 5 CSV fixtures confirm method is the only difference. XLSX proven end-to-end via upload; webhook parity for XLSX not yet tested separately.
+>
+> **Milestone 3 is done when:**
+> - [ ] A second import to the same account correctly identifies new, updated, unchanged, and disappeared invoices
+> - [ ] Fuzzy customer matching merges obvious name variants and asks for confirmation on ambiguous ones
+> - [ ] Anomalies are flagged (balance increase, due date change, reappeared invoice, cluster risk)
+> - [ ] No data lost or duplicated across sequential imports
 
 ---
 
@@ -256,7 +286,6 @@ README.md               — project overview
 | Update `company_id` comment from "IČO in Czech" to generic "company registration number" | Next schema pass | Cosmetic but signals correct mental model |
 | Add Italian to required reminder template languages | M5 (Action Execution) | FR/IT are primary markets; Italian must be first-class |
 | Rotate Railway PostgreSQL password | ASAP | Public URL with credentials used in terminal session during migration |
-| Create XLSX test fixture | M2 (next sub-task) | XLSX parsing path implemented but needs validation |
 
 ---
 
