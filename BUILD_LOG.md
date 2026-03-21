@@ -199,6 +199,7 @@ The full product spec lives in these docs (paste relevant sections when needed, 
 4. Read **Open Bugs** before writing new code
 5. Check **Decisions Made** before proposing architecture changes
 6. When the session ends, Lorenzo will ask you to update this file — follow the instructions below
+7. When Claude generates a Codex prompt, always include `git add . && git commit -m "..." && git push origin main` at the end if files were changed. Codex handles git directly.
 
 ---
 
@@ -245,3 +246,4 @@ When Lorenzo says "update the build log" or "wrap up the session", do this:
 - **Never delete session history.** It's append-only.
 - **Keep the log under 300 lines.** If it gets long, archive old sessions to `docs/session-archive.md` and keep only the last 5 sessions here.
 - **Don't summarise — be concrete.** Someone reading this at 2 AM with no context should know exactly what state the project is in.
+- **Always commit and push.** Every Codex prompt that modifies files should end with `git add . && git commit -m "descriptive message" && git push origin main`. Codex can do this directly — Lorenzo does not need to do it manually in the terminal.
