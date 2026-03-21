@@ -19,8 +19,8 @@
 ## Current State
 
 - **Milestone:** 2 of 10 — Ingestion Engine (upload-first)
-- **Sub-task:** File parsing engine — CSV/XLSX parser with encoding detection
-- **Status:** All 7 database tables created and migrated to production PostgreSQL (accounts, users, customers, invoices, import_records, import_templates, activities). Ready to build the parsing and column mapping logic.
+- **Sub-task:** Column mapper — deterministic matching + LLM fallback
+- **Status:** File parser complete (74 tests passing). FR/IT fixtures added. ImportTemplate schema migrated to production. Ready to build column mapping logic.
 - **Blockers:** None
 - **Last session:** 2026-03-21
 
@@ -34,13 +34,14 @@ backend/
   app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
+  app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback, pure-integer ID protection.
   app/models/__init__.py  — imports all 7 models for Alembic
   app/models/account.py   — Account (company using the product)
   app/models/user.py      — User (person logging in, separate for future multi-user)
   app/models/customer.py  — Customer (debtor, with fuzzy match fields + merge_history JSONB)
   app/models/invoice.py   — Invoice (core record, 8 statuses, recovery tracking, data lineage, 4 composite indexes)
   app/models/import_record.py — ImportRecord (full audit trail, change_set JSONB for rollback, cost tracking)
-  app/models/import_template.py — ImportTemplate (saved column mappings, format hints, usage counter)
+  app/models/import_template.py — ImportTemplate (saved column mappings, format hints: decimal_separator + thousands_separator, usage counter). CHANGED in session 6: replaced number_format with explicit separator fields, updated comments to multilingual examples.
   app/models/activity.py  — Activity (timeline of all events, flexible JSONB details, 4 indexes)
   app/routers/webhooks.py — Resend inbound webhook, attachment listing + download logging
   app/routers/__init__.py — routers package marker
@@ -48,10 +49,12 @@ backend/
   app/__init__.py       — app package marker
   app/services/__init__.py — services package marker
   alembic/versions/4a129036b96f_create_all_tables.py — initial migration creating all 7 tables
+  alembic/versions/7d3f8c2b1a90_replace_number_format_with_separator_fields.py — migration: drop number_format, add decimal_separator + thousands_separator on import_templates
   alembic/env.py        — updated to import all models for autogenerate
   alembic/script.py.mako — Alembic revision template
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
+  tests/test_file_parser.py   — 74 tests covering 5 fixtures + inline edge cases (comma+dot, plain dot, ID protection, .xls rejection, empty file, header-only, TSV)
   Dockerfile            — Python 3.12 slim backend image for Railway
   railway.toml          — Railway deploy config
   requirements.txt      — all backend deps
@@ -77,7 +80,9 @@ sample-data/
   pohoda_ar_export.csv   — semicolon-delimited, Czech headers, DD.MM.YYYY dates, 15 invoices
   fakturoid_ar_export.csv — comma-delimited, English headers, ISO dates, EUR, 15 invoices
   messy_generic_export.csv — Czech headers, messy data, missing fields, Czech number formatting, 12 invoices
-  README.md              — documents every edge case for ingestion testing
+  french_ar_export.csv    — semicolon, French headers, DD/MM/YYYY, space+comma numbers, Windows-1252 encoding, SARL/SAS/SA/EURL/SCI suffixes
+  italian_ar_export.csv   — semicolon, Italian headers, DD/MM/YYYY, dot+comma numbers (45.000,00), S.r.l./S.p.A./S.a.s./S.n.c. suffixes
+  README.md              — documents all edge cases, format coverage matrix, and European scope. CHANGED in session 6: full rewrite.
 BUILD_LOG.md            — this file
 README.md               — project overview
 .gitignore              — Python + Node + env files
@@ -86,6 +91,22 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 6 — 2026-03-21
+- Built `backend/app/services/file_parser.py`: CSV/XLSX parser with encoding detection (chardet + Western European priority fallback), delimiter detection (Sniffer + consistency scoring), header row detection (scoring heuristic), and format-shaped numeric/date type inference
+- Four number separator patterns supported: space+comma, dot+comma, comma+dot, plain dot decimal — no country labels in code
+- Pure integer columns (SIRET, IČO, Partita IVA) protected from numeric misclassification — require decimal punctuation evidence
+- Slash dates always DD/MM (European convention), no MM/DD disambiguation
+- .xls rejected with clear re-export message (openpyxl limitation)
+- Created `sample-data/french_ar_export.csv` (Windows-1252, semicolon, French headers, space+comma numbers, DD/MM/YYYY, 12 rows)
+- Created `sample-data/italian_ar_export.csv` (UTF-8, semicolon, Italian headers, dot+comma numbers, DD/MM/YYYY, 12 rows)
+- Rewrote `sample-data/README.md` with full format coverage matrix
+- Replaced `number_format` field on ImportTemplate with `decimal_separator` + `thousands_separator` (model + manual Alembic migration `7d3f8c2b1a90_replace_number_format_with_separator_fields.py`)
+- Migration applied successfully to production Railway PostgreSQL (Alembic upgrade 4a129036b96f → 7d3f8c2b1a90)
+- 74 parser tests passing across 5 CSV fixtures + 3 inline edge case classes. XLSX parsing implemented but not yet validated with a real XLSX fixture.
+- Parser scope and migration plan were reviewed before implementation to catch schema and parser-design risks early
+- Established European-first invariant: France and Italy are primary launch markets, Czech is supported but not default reference
+- **Next:** Build the column mapper (deterministic dictionary for FR/IT/CZ/EN/DE/ES headers → saved template matching → LLM fallback). Also: create an XLSX test fixture to validate XLSX parsing path.
 
 ### Session 5 — 2026-03-21
 - Cross-document consistency review with Claude (architecture, planning). GPT-5.4 used as second reviewer.
@@ -151,6 +172,7 @@ README.md               — project overview
 | 10 | SQLAlchemy 2.0.48 (upgraded from 2.0.36) | Python 3.14 compatibility — 2.0.36 had a Union type bug with 3.14 | 2026-03-20 |
 | 11 | Soft deletes on Invoice and Customer | Financial data should never be hard-deleted; nullable deleted_at column | 2026-03-20 |
 | 12 | JSONB for change_set, merge_history, activity details | Flexibility without creating dozens of tables; sufficient for v1, can normalize later if needed | 2026-03-20 |
+| 13 | European-first compatibility is a project invariant | France and Italy are primary launch markets. Czech is supported but not the default reference case. Parser uses format-shaped detection (separator patterns, not country buckets). All fixtures, header dictionaries, and legal suffix handling must cover FR/IT as first-class. | 2026-03-21 |
 
 ---
 
@@ -183,13 +205,27 @@ README.md               — project overview
 > **Milestone 1: COMPLETE** — all 8/8 exit gates passed on 2026-03-20.
 >
 > **Milestone 2 is done when:**
-> - [ ] Files parse correctly: CSV (comma and semicolon delimited) and XLSX
-> - [ ] Encoding detection works (UTF-8, Windows-1250, ISO-8859-2)
+> - [x] CSV files parse correctly (comma and semicolon delimited) — verified across 5 fixtures
+> - [ ] XLSX files parse correctly — implemented but not yet validated with a real XLSX fixture
+> - [x] Encoding detection works for UTF-8 and Windows-1252 — verified by pohoda/fakturoid/messy/italian (UTF-8) and french (Windows-1252) fixtures
+> - [ ] Encoding detection works for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2 — implemented as fallbacks but not yet proven by fixture
 > - [ ] Column mapping works deterministically for known formats and falls back to LLM for unknown ones
-> - [ ] At least 5 real-world export formats parse correctly (3 synthetic samples + 2 more during M2)
+> - [ ] At least 5 export formats parse correctly — validated with 5 synthetic fixtures; real customer exports still needed during pilot
 > - [ ] Email ingestion wrapper feeds attachments into the same pipeline as manual upload
 > - [ ] Manual upload endpoint accepts CSV/XLSX and returns parsed results
 > - [ ] Both ingestion paths produce identical results for the same file
+
+---
+
+## Queued Items (non-blocking)
+
+| Item | Target Milestone | Notes |
+|------|-----------------|-------|
+| Change Account defaults: currency CZK → EUR, timezone Europe/Prague → Europe/Paris | M4 (Core UI) | Onboarding should detect locale and suggest defaults |
+| Update `company_id` comment from "IČO in Czech" to generic "company registration number" | Next schema pass | Cosmetic but signals correct mental model |
+| Add Italian to required reminder template languages | M5 (Action Execution) | FR/IT are primary markets; Italian must be first-class |
+| Rotate Railway PostgreSQL password | ASAP | Public URL with credentials used in terminal session during migration |
+| Create XLSX test fixture | M2 (next sub-task) | XLSX parsing path implemented but needs validation |
 
 ---
 
