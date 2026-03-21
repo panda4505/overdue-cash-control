@@ -30,7 +30,7 @@
 
 ```
 backend/
-  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook router
+  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook + upload router registration
   app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
@@ -61,7 +61,7 @@ backend/
   tests/test_column_mapper.py — 48 tests: 5 fixture mappings (all deterministic, LLM patched to verify never called), template validation + enrichment, mocked LLM fallback, hallucination rejection, conflict resolution, amount fallback, type-compatible candidate preference, partial-match guard, success=False on zero mappings.
   tests/test_ingestion.py   — Service-level ingestion tests: all 5 fixtures, hash, serialization, template pass-through, error handling.
   tests/test_upload.py      — HTTP endpoint tests: upload success, file validation, response shape, hash verification.
-  Dockerfile            — Python 3.12 slim backend image for Railway
+  Dockerfile            — Python 3.12-slim backend image for Railway (production). Local dev/test runs Python 3.14.3.
   railway.toml          — Railway deploy config
   requirements.txt      — all backend deps
 frontend/
@@ -203,6 +203,7 @@ README.md               — project overview
 | 11 | Soft deletes on Invoice and Customer | Financial data should never be hard-deleted; nullable deleted_at column | 2026-03-20 |
 | 12 | JSONB for change_set, merge_history, activity details | Flexibility without creating dozens of tables; sufficient for v1, can normalize later if needed | 2026-03-20 |
 | 13 | European-first compatibility is a project invariant | France and Italy are primary launch markets. Czech is supported but not the default reference case. Parser uses format-shaped detection (separator patterns, not country buckets). All fixtures, header dictionaries, and legal suffix handling must cover FR/IT as first-class. | 2026-03-21 |
+| 14 | Python 3.12 for production (Dockerfile), 3.14.3 for local dev | Railway Dockerfile pins a Python 3.12 slim image for deployment stability. Local dev/test environment runs 3.14.3. Both are compatible — SQLAlchemy 2.0.48 upgrade (decision #10) resolved the only known incompatibility. No action needed unless a 3.14-only feature is used in code. | 2026-03-21 |
 
 ---
 
