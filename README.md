@@ -4,7 +4,7 @@ Collections workflow for EU SMBs. Import your receivables, get a daily action qu
 
 ## Stack
 
-- **Backend:** Python 3.12 + FastAPI
+- **Backend:** Python + FastAPI
 - **Frontend:** Next.js 14 + Tailwind + shadcn/ui
 - **Database:** PostgreSQL 16 (Railway managed)
 - **Hosting:** Railway

@@ -197,7 +197,7 @@ recruiting pilot users. Do not underestimate that work.*
 
 | Layer | Choice | Notes |
 |-------|--------|-------|
-| Backend | Python 3.12 + FastAPI | Lorenzo's comfort language |
+| Backend | Python + FastAPI | Lorenzo's comfort language. Production Dockerfile currently pins `python:3.12-slim`; local dev/test currently runs Python 3.14.3. |
 | Database | PostgreSQL 16 (Railway managed) | Relational, async via asyncpg |
 | ORM | SQLAlchemy 2.0.48 (async) + Alembic | Upgraded from 2.0.36 for Python 3.14 compatibility |
 | Hosting | Railway | Backend, frontend, PostgreSQL. Auto-deploy from GitHub main. |

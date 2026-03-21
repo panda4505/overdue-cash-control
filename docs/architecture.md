@@ -10,7 +10,7 @@
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Backend | Python 3.12 + FastAPI | Lorenzo's comfort language. Async support. Rich file-parsing ecosystem (pandas, openpyxl, chardet). |
+| Backend | Python + FastAPI | Lorenzo's comfort language. Async support. Rich file-parsing ecosystem (pandas, openpyxl, chardet). Production Dockerfile currently pins `python:3.12-slim`; local dev/test currently runs Python 3.14.3. |
 | Frontend | Next.js 14 + Tailwind CSS + shadcn/ui | Fast to build, clean defaults. App Router with server components for dashboard. |
 | Database | PostgreSQL 16 (Railway managed) | Relational, well-defined data model. JSONB for flexible import metadata. Managed backups, SSL, connection pooling. |
 | ORM | SQLAlchemy 2.0 (async) | Mature, well-documented. Async via asyncpg driver. Alembic for migrations. |
