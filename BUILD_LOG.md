@@ -19,8 +19,8 @@
 ## Current State
 
 - **Milestone:** 2 of 10 — Ingestion Engine (upload-first)
-- **Sub-task:** Upload + email ingestion endpoints (connect parser+mapper to HTTP routes)
-- **Status:** File parser (74 tests) and column mapper (48 tests) complete. 6-language deterministic dictionary maps all 5 fixtures without LLM. Template validation, LLM fallback, and conflict resolution all tested. Ready to build the upload endpoint and email ingestion wrapper.
+- **Sub-task:** Email ingestion wrapper + parity tests
+- **Status:** Shared ingestion service and manual upload endpoint complete. Parser → mapper pipeline exposed via POST /upload. Ready to wire email webhook to the same ingestion service.
 - **Blockers:** None
 - **Last session:** 2026-03-21
 
@@ -36,6 +36,7 @@ backend/
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
   app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback, pure-integer ID protection.
   app/services/column_mapper.py — Column mapper with 6-language deterministic dictionary (FR/IT/EN/CZ/DE/ES), template validation with normalized comparison + always-enrich, async LLM fallback with hallucination protection. 14 canonical fields (12 core, 2 auxiliary). 48 tests.
+  app/services/ingestion.py — Shared canonical ingestion pipeline: parse → map → package preview. SHA-256 file hash. JSON-serializable sample rows with original headers.
   app/models/__init__.py  — imports all 7 models for Alembic
   app/models/account.py   — Account (company using the product)
   app/models/user.py      — User (person logging in, separate for future multi-user)
@@ -44,6 +45,7 @@ backend/
   app/models/import_record.py — ImportRecord (full audit trail, change_set JSONB for rollback, cost tracking)
   app/models/import_template.py — ImportTemplate (saved column mappings, format hints: decimal_separator + thousands_separator, usage counter). CHANGED in session 6: replaced number_format with explicit separator fields, updated comments to multilingual examples.
   app/models/activity.py  — Activity (timeline of all events, flexible JSONB details, 4 indexes)
+  app/routers/upload.py     — POST /upload endpoint: thin wrapper over ingestion service, accepts CSV/TSV/XLSX multipart upload.
   app/routers/webhooks.py — Resend inbound webhook, attachment listing + download logging
   app/routers/__init__.py — routers package marker
   app/utils/__init__.py — utils package placeholder
@@ -57,6 +59,8 @@ backend/
   tests/__init__.py     — tests package placeholder
   tests/test_file_parser.py   — 74 tests covering 5 fixtures + inline edge cases (comma+dot, plain dot, ID protection, .xls rejection, empty file, header-only, TSV)
   tests/test_column_mapper.py — 48 tests: 5 fixture mappings (all deterministic, LLM patched to verify never called), template validation + enrichment, mocked LLM fallback, hallucination rejection, conflict resolution, amount fallback, type-compatible candidate preference, partial-match guard, success=False on zero mappings.
+  tests/test_ingestion.py   — Service-level ingestion tests: all 5 fixtures, hash, serialization, template pass-through, error handling.
+  tests/test_upload.py      — HTTP endpoint tests: upload success, file validation, response shape, hash verification.
   Dockerfile            — Python 3.12 slim backend image for Railway
   railway.toml          — Railway deploy config
   requirements.txt      — all backend deps
@@ -93,6 +97,16 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 8 — 2026-03-21
+- Created `backend/app/services/ingestion.py`: shared canonical ingestion pipeline (parse → map → package preview result) used by both upload and email paths
+- SHA-256 file hash computed on every ingestion for future duplicate detection
+- Sample rows (first 10) extracted with original headers and JSON-serializable values
+- Created `POST /upload` endpoint in `backend/app/routers/upload.py`: thin wrapper over ingestion service, validates file extension and emptiness, returns full preview JSON
+- Registered upload router in `backend/app/main.py`
+- No database writes, no file persistence, no auth — those are separate concerns with separate implementation steps
+- Service tests + endpoint tests passing across all 5 fixtures
+- **Next:** Wire email webhook to call the same ingestion service. Add parity test proving upload and email produce identical results for the same file.
 
 ### Session 7 — 2026-03-21
 - Built the column mapper service: async mapper with three matching strategies — saved template validation, deterministic dictionary, and LLM fallback
@@ -228,7 +242,7 @@ README.md               — project overview
 > - [x] Column mapping works deterministically for known formats and falls back to LLM for unknown ones — verified across 5 fixtures spanning CZ/EN/FR/IT, LLM path tested with mocked provider, 48 tests
 > - [ ] At least 5 export formats parse correctly — validated with 5 synthetic fixtures; real customer exports still needed during pilot
 > - [ ] Email ingestion wrapper feeds attachments into the same pipeline as manual upload
-> - [ ] Manual upload endpoint accepts CSV/XLSX and returns parsed results
+> - [x] Manual upload endpoint accepts CSV/XLSX and returns parsed results — POST /upload returns full parse + mapping preview
 > - [ ] Both ingestion paths produce identical results for the same file
 
 ---
