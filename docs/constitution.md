@@ -705,7 +705,7 @@ business. Never let services become the real product.
 
 17\. Companion documents
 
-This constitution is the foundation. Three companion documents build on
+This constitution is the foundation. Five companion documents build on
 it:
 
 1.  **Wedge Definition.** Defines the specific v1 wedge (Overdue Cash
@@ -716,9 +716,17 @@ it:
     ingestion engine spec, escalation engine, build spec, and success
     criteria.
 
-3.  **Build Trajectory.** Twelve milestones from architecture to launch,
+3.  **Build Trajectory.** Ten milestones from architecture to launch,
     with session plans, exit gates, risk register, and the working model
     for building with Claude as the AI engineer.
 
-All three reference this constitution. If any specification in those
+4.  **Architecture Decision Record** (`docs/architecture.md`). Stack
+    choices, project structure, Railway architecture, LLM integration
+    design, email architecture, security model.
+
+5.  **Build Log** (`BUILD_LOG.md`). Live session-by-session record of
+    what exists, what works, what's broken, and what's next. The single
+    source of truth for current implementation state.
+
+All five reference this constitution. If any specification in those
 documents contradicts a principle here, this document wins.

@@ -18,7 +18,7 @@
 
 ## Current State
 
-- **Milestone:** 2 of 12 — Ingestion Engine (upload-first)
+- **Milestone:** 2 of 10 — Ingestion Engine (upload-first)
 - **Sub-task:** File parsing engine — CSV/XLSX parser with encoding detection
 - **Status:** All 7 database tables created and migrated to production PostgreSQL (accounts, users, customers, invoices, import_records, import_templates, activities). Ready to build the parsing and column mapping logic.
 - **Blockers:** None
@@ -71,7 +71,7 @@ docs/
   architecture.md       — full stack and design decisions
   constitution.md       — governing principles, decision filter, beachhead definition, pricing, exclusions
   product-definition.md — screen-by-screen UX, data model (aligned with actual build), engine specs, deferred entities marked
-  trajectory.md         — 12 milestones from architecture to launch, aligned with actual build (M1 marked complete, Codex/Claude dual model, Resend, OpenAI/DeepSeek)
+  trajectory.md         — 10 milestones from architecture to launch, aligned with actual build (M1 marked complete, Codex/Claude dual model, Resend, OpenAI/DeepSeek)
   wedge-v1.md           — canonical wedge statement, scope boundary, input layer, AI role, aligned with actual build (Resend, preview-before-commit, no PDF parsing in v1)
 sample-data/
   pohoda_ar_export.csv   — semicolon-delimited, Czech headers, DD.MM.YYYY dates, 15 invoices
@@ -192,7 +192,7 @@ The full product spec lives in these docs (paste relevant sections when needed, 
 - **Product constitution** (`docs/constitution.md`) — governing principles, decision filter, beachhead definition, pricing, exclusions
 - **Wedge definition v1** (`docs/wedge-v1.md`) — canonical wedge statement, scope boundary, input layer, AI role. Aligned with actual build.
 - **Product definition** (`docs/product-definition.md`) — screen-by-screen UX, data model, ingestion/reconciliation/escalation engine specs. Aligned with actual build as of M2 start.
-- **Build trajectory** (`docs/trajectory.md`) — 12 milestones, session plans, exit gates, risk register. Aligned with actual build as of M2 start.
+- **Build trajectory** (`docs/trajectory.md`) — 10 milestones, session plans, exit gates, risk register. Aligned with actual build as of M2 start.
 - **Buyer analysis** — harsh buyer assessment with pricing signals, shared during M1 close-out
 
 ---
@@ -205,7 +205,7 @@ The full product spec lives in these docs (paste relevant sections when needed, 
 4. Read **Open Bugs** before writing new code
 5. Check **Decisions Made** before proposing architecture changes
 6. When the session ends, Lorenzo will ask you to update this file — follow the instructions below
-7. When Claude generates a Codex prompt, always include `git add . && git commit -m "..." && git push origin main` at the end if files were changed. Codex handles git directly.
+7. When Claude generates a Codex prompt, always include `git add . && git commit -m "..." && git push origin main` at the end if files were changed. Codex handles git directly (Lorenzo approves before execution in agent mode).
 
 ---
 

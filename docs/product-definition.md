@@ -604,7 +604,7 @@ Indexes: (account_id, created_at), (invoice_id, created_at), (customer_id, creat
 
 3.8 Reminder template
 
-*Deferred to Milestone 6 (Action Execution & Reminders). Will be created as a database table via Alembic migration when the reminder system is built. The spec below is the target design.*
+*Deferred to Milestone 5 (Action Execution & Reminders). Will be created as a database table via Alembic migration when the reminder system is built. The spec below is the target design.*
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -618,7 +618,7 @@ Indexes: (account_id, created_at), (invoice_id, created_at), (customer_id, creat
 
 3.9 Escalation rules
 
-*Deferred to Milestone 6 (Action Execution & Reminders). Will be created as a database table via Alembic migration. The spec below is the target design.*
+*Deferred to Milestone 5 (Action Execution & Reminders). Will be created as a database table via Alembic migration. The spec below is the target design.*
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -632,7 +632,7 @@ day 28 final notice, day 35 escalate.
 
 3.10 Event log (instrumentation)
 
-*Deferred to Milestone 8 (Instrumentation). Will be created as a database table via Alembic migration. The spec below is the target design. Note: many instrumentation signals can be derived from the Activity table and ImportRecord cost-tracking fields (parse_duration_ms, mapping_method, llm_tokens_used) that already exist.*
+*Deferred — to be built only if Activity and ImportRecord signals prove insufficient. Evaluate need during M7 (Internal Testing). Many instrumentation signals are already derivable from the Activity table and ImportRecord cost-tracking fields (parse_duration_ms, mapping_method, llm_tokens_used). The spec below is the target design if a dedicated table is warranted.*
 
 Internal analytics events. Not visible to users. Used for pilot
 validation and constitutional assumption testing.
@@ -657,9 +657,9 @@ validation and constitutional assumption testing.
 -   ImportTemplate belongs to Account. Has many ImportRecords.
 
 **Deferred:**
--   ReminderTemplate belongs to Account. (M6)
--   EscalationRules belongs to Account. (M6)
--   EventLog belongs to Account. (M8)
+-   ReminderTemplate belongs to Account. (M5)
+-   EscalationRules belongs to Account. (M5)
+-   EventLog belongs to Account. (If needed — evaluate M7)
 
 4\. Ingestion engine
 
@@ -989,7 +989,7 @@ The product is ready for first paying customers when:
 2.  **Wedge Definition.** Canonical wedge statement, scope boundary,
     input mechanisms, source-of-truth statement.
 
-3.  **Build Trajectory.** Twelve milestones from architecture to launch,
+3.  **Build Trajectory.** Ten milestones from architecture to launch,
     session plans, exit gates, risk register, working model for building
     with AI engineers (Codex + Claude).
 

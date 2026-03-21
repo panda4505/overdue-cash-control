@@ -20,7 +20,7 @@
 | Email — Outbound | Resend | Sends reminders from custom domain (noreply@overduecash.com). SPF/DKIM via Cloudflare auto-config. |
 | Email — Inbound | Resend | Receives AR exports via webhook. Inbound address: tuaentoocl.resend.app. Attachments downloaded via Resend Attachments API. |
 | DNS / CDN | Cloudflare | Domain registrar and DNS for overduecash.com. Free tier. Auto-configured DKIM/SPF for Resend. |
-| Auth | Deferred to Milestone 10 | Simple email+password with bcrypt + JWT sessions for internal testing. Proper auth service later. |
+| Auth | Simple auth M4, hardening M8 | Email+password with bcrypt + JWT built in M4 (Core UI). Auth hardening (verification, rate limiting, data isolation) in M8 (Security & Trust). |
 | Coding assistant | OpenAI Codex extension in VS Code | GPT-5.4, agent mode. Primary interface for writing and editing code. |
 | Version control | GitHub (private repo) | CI/CD via Railway auto-deploy from main. |
 
@@ -51,7 +51,7 @@ overdue-cash-control/
 │   ├── Dockerfile
 │   └── package.json
 ├── docs/                        # Product and architecture docs
-├── sample-data/                 # Real AR export files for testing
+├── sample-data/                 # Synthetic AR export files for testing
 ├── BUILD_LOG.md                 # Session continuity file
 └── README.md
 ```
@@ -118,7 +118,7 @@ Two permanently first-class sending paths:
 
 ---
 
-## Data Flow (Milestone 2+)
+## Data Flow
 
 ```
 Email with CSV/XLSX attachment
@@ -161,7 +161,7 @@ Email with CSV/XLSX attachment
 
 ## Key Design Principles
 
-1. **Upload-first ingestion.** Manual upload is the guaranteed path. Email is a convenience wrapper over the same pipeline.
+1. **Upload-first ingestion.** Manual upload is the guaranteed path. Email is a convenience wrapper over the same pipeline. This is an engineering guarantee, not a UX hierarchy — both paths are presented as first-class to the user (see product definition §2.1).
 2. **Preview-before-commit.** Every import shows what will change before touching live data.
 3. **Deterministic-first AI.** Saved templates and rule-based matching are primary. LLM is fallback for ambiguity only.
 4. **Pre-generated actions.** Every queue item arrives with a ready-to-execute action. The user reviews and confirms, not composes from scratch.

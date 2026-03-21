@@ -397,6 +397,6 @@ This wedge definition is one of five documents that govern the product:
 
 1.  **Product Constitution** (`docs/constitution.md`) — governing principles, decision filter, beachhead definition.
 2.  **Product Definition** (`docs/product-definition.md`) — screen-by-screen UX, data model, engine specs.
-3.  **Build Trajectory** (`docs/trajectory.md`) — 12 milestones, session plans, exit gates.
+3.  **Build Trajectory** (`docs/trajectory.md`) — 10 milestones, session plans, exit gates.
 4.  **Architecture Decision Record** (`docs/architecture.md`) — actual stack and design choices.
 5.  **Build Log** (`BUILD_LOG.md`) — live implementation state, session history.

@@ -201,7 +201,7 @@ recruiting pilot users. Do not underestimate that work.*
 | Database | PostgreSQL 16 (Railway managed) | Relational, async via asyncpg |
 | ORM | SQLAlchemy 2.0.48 (async) + Alembic | Upgraded from 2.0.36 for Python 3.14 compatibility |
 | Hosting | Railway | Backend, frontend, PostgreSQL. Auto-deploy from GitHub main. |
-| Email (inbound + outbound) | Resend | Domain overduecash.com verified. Inbound via tuaentoocl.resend.app. Originally planned Resend, switched during M1. |
+| Email (inbound + outbound) | Resend | Domain overduecash.com verified. Inbound via tuaentoocl.resend.app. Originally planned Postmark, switched to Resend during M1. |
 | LLM — Primary | OpenAI API (gpt-4o-mini) | For column mapping and fuzzy matching. Deterministic matching is primary. |
 | LLM — Fallback | DeepSeek API (deepseek-chat) | OpenAI-compatible API, cost-effective fallback. |
 | Frontend | Next.js 14 + Tailwind CSS + shadcn/ui | App Router, TypeScript |
@@ -423,7 +423,7 @@ Anomaly detection
 **Your role:** Daily UX review. Open each screen, try every interaction,
 report what feels wrong or slow.
 
-**AI role:** Codex builds all 8 screens defined in the product definition
+**AI role:** Codex builds all 9 screens defined in the product definition
 document. Frontend and API endpoints.
 
 6.1 Build order
@@ -434,29 +434,30 @@ document. Frontend and API endpoints.
 2.  **Column mapping confirmation.** AI-detected mapping, user confirms
     or overrides, saves template.
 
-3.  **Dashboard.** Summary cards, aging breakdown, activity feed,
+3.  **Import preview.** The trust screen. Shows exactly what will change before anything touches live data. User confirms or cancels.
+
+4.  **Dashboard.** Summary cards, aging breakdown, activity feed,
     last-import indicator.
 
-4.  **Action queue.** Filterable, sortable list with priority flags and
+5.  **Action queue.** Filterable, sortable list with priority flags and
     inline quick actions.
 
-5.  **Invoice detail.** Two-panel: facts + activity timeline.
+6.  **Invoice detail.** Two-panel: facts + activity timeline.
 
-6.  **Customer profile.** Aggregated debtor view with all invoices and
+7.  **Customer profile.** Aggregated debtor view with all invoices and
     consolidated timeline.
 
-7.  **Settings.** Company profile, import templates, escalation rules,
+8.  **Settings.** Company profile, import templates, escalation rules,
     notifications, team members.
 
-8.  **Import status.** Log of recent imports with processing stats and
+9.  **Import status.** Log of recent imports with processing stats and
     errors.
 
 6.2 Session plan
 
 This is the longest milestone. Expect 8--12 working sessions:
 
-1.  **Sessions 1--2:** Onboarding + column mapping screens. Includes
-    auth setup and login flow.
+1.  **Sessions 1--2:** Onboarding, column mapping, and import preview screens. Includes auth setup and login flow.
 
 2.  **Sessions 3--5:** Dashboard and action queue. These are the most
     complex screens. Iterate on layout, filtering, and sorting.
@@ -485,7 +486,7 @@ This is the longest milestone. Expect 8--12 working sessions:
 
 6.4 Exit gate
 
-> *All 8 screens are functional with real imported data. Navigation is
+> *All 9 screens are functional with real imported data. Navigation is
 > instant. All screens load in under 2 seconds. The dashboard shows
 > accurate summary numbers. The action queue correctly filters and
 > sorts. You can click into any invoice or customer and see the full
@@ -757,7 +758,7 @@ The goal is not revenue. The goal is to answer three questions:
 **Start recruiting during milestone 5, not after milestone 7.** You need
 lead time. Finding 3--5 willing companies takes weeks of conversations.
 
-Target profile: 5--50 person Czech company, 30+ open invoices, chases
+Target profile: 5--50 person Czech company, 50+ open invoices, chases
 payments manually, uses an accounting tool that can export to CSV/XLSX,
 has a finance person as daily user, and an owner who will give honest
 feedback.
