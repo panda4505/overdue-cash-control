@@ -1,0 +1,13 @@
+Numero fattura;Ragione sociale;Email;Partita IVA;Data emissione;Data scadenza;Importo lordo;Valuta;Importo residuo;Stato
+FT-2026/001;Rossi Costruzioni S.r.l.;amministrazione@rossi-costruzioni.it;IT01234567890;03/01/2026;18/01/2026;12.500,00;EUR;12.500,00;Scaduta
+FT-2026/002;Bianchi Trasporti S.p.A.;contabilita@bianchi-trasp.it;IT02345678901;05/01/2026;20/01/2026;3.400,00;EUR;3.400,00;Scaduta
+FT-2026/003;Ferrari Meccanica S.r.l.;fatture@ferrari-mecc.it;IT03456789012;08/01/2026;23/01/2026;45.000,00;EUR;45.000,00;Scaduta
+FT-2026/004;Rossi Costruzioni Srl;amministrazione@rossi-costruzioni.it;IT01234567890;10/01/2026;25/01/2026;8.900,00;EUR;8.900,00;Scaduta
+FT-2026/005;Conti & Associati S.a.s.;info@conti-associati.it;IT04567890123;12/01/2026;27/01/2026;2.100,00;EUR;1.050,00;Parziale
+FT-2026/006;Bianchi Trasporti S.p.A.;contabilita@bianchi-trasp.it;IT02345678901;15/01/2026;30/01/2026;5.600,00;EUR;5.600,00;Scaduta
+FT-2026/007;Marino Alimentari S.n.c.;admin@marino-food.it;IT05678901234;18/01/2026;02/02/2026;1.800,00;EUR;1.800,00;Scaduta
+FT-2026/008;Ferrari Meccanica S.r.l.;fatture@ferrari-mecc.it;IT03456789012;20/01/2026;04/02/2026;22.300,00;EUR;22.300,00;Scaduta
+FT-2026/009;Greco Impianti S.r.l.;contabilita@greco-imp.it;IT06789012345;22/01/2026;06/02/2026;6.750,00;EUR;6.750,00;Scaduta
+FT-2026/010;Rossi Costruzioni;amministrazione@rossi-costruzioni.it;IT01234567890;25/01/2026;09/02/2026;15.200,00;EUR;15.200,00;Scaduta
+FT-2026/011;Lombardi Edilizia S.r.l.;ufficio@lombardi-edil.it;IT07890123456;28/01/2026;12/02/2026;4.100,00;EUR;4.100,00;Scaduta
+FT-2026/012;Conti & Associati S.a.s.;info@conti-associati.it;IT04567890123;01/02/2026;16/02/2026;9.500,00;EUR;0,00;Pagata

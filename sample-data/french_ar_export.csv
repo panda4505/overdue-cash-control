@@ -1,0 +1,13 @@
+Numéro de facture;Nom du client;Email client;SIRET;Date d'émission;Date d'échéance;Montant TTC;Devise;Reste à payer;Statut
+FA-2026-001;Dupont Bâtiment SARL;comptabilite@dupont-bat.fr;12345678901234;03/01/2026;18/01/2026;12 500,00;EUR;12 500,00;En retard
+FA-2026-002;Martin & Fils SAS;admin@martinetfils.fr;23456789012345;05/01/2026;20/01/2026;3 400,00;EUR;3 400,00;En retard
+FA-2026-003;Société Générale de Transport SA;facturation@sgt-transport.fr;34567890123456;08/01/2026;23/01/2026;45 000,00;EUR;45 000,00;En retard
+FA-2026-004;Dupont Batiment SARL;comptabilite@dupont-bat.fr;12345678901234;10/01/2026;25/01/2026;8 900,00;EUR;8 900,00;En retard
+FA-2026-005;Lefèvre Consulting EURL;contact@lefevre-conseil.fr;45678901234567;12/01/2026;27/01/2026;2 100,00;EUR;1 050,00;Partiel
+FA-2026-006;Martin et Fils SAS;admin@martinetfils.fr;23456789012345;15/01/2026;30/01/2026;5 600,00;EUR;5 600,00;En retard
+FA-2026-007;Boulangerie Moreau SCI;gestion@moreau-immo.fr;56789012345678;18/01/2026;02/02/2026;1 800,00;EUR;1 800,00;En retard
+FA-2026-008;Société Générale de Transport SA;facturation@sgt-transport.fr;34567890123456;20/01/2026;04/02/2026;22 300,00;EUR;22 300,00;En retard
+FA-2026-009;Petit Électricité SARL;factures@petit-elec.fr;67890123456789;22/01/2026;06/02/2026;6 750,00;EUR;6 750,00;En retard
+FA-2026-010;Dupont Bâtiment;comptabilite@dupont-bat.fr;12345678901234;25/01/2026;09/02/2026;15 200,00;EUR;15 200,00;En retard
+FA-2026-011;Garcia Distribution SARL;compta@garcia-dist.fr;78901234567890;28/01/2026;12/02/2026;4 100,00;EUR;4 100,00;En retard
+FA-2026-012;Lefèvre Consulting EURL;contact@lefevre-conseil.fr;45678901234567;01/02/2026;16/02/2026;9 500,00;EUR;0,00;Payé

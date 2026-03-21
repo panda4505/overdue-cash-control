@@ -31,12 +31,12 @@ class ImportTemplate(Base):
     column_mapping: Mapped[dict] = mapped_column(JSONB, nullable=False)
     # column_mapping structure:
     # {
-    #   "invoice_number": "Číslo faktury",
-    #   "customer_name": "Odběratel",
-    #   "due_date": "Datum splatnosti",
-    #   "gross_amount": "Celkem s DPH",
-    #   "outstanding_amount": "Zbývá uhradit",
-    #   "currency": "Měna",
+    #   "invoice_number": "Numero fattura",     # or "Numéro de facture", "Číslo faktury", "Invoice Number"
+    #   "customer_name": "Ragione sociale",     # or "Nom du client", "Odběratel", "Client Name"
+    #   "due_date": "Data scadenza",            # or "Date d'échéance", "Datum splatnosti", "Due Date"
+    #   "gross_amount": "Importo lordo",        # or "Montant TTC", "Celkem s DPH", "Total Amount"
+    #   "outstanding_amount": "Importo residuo", # or "Reste à payer", "Zbývá uhradit", "Amount Due"
+    #   "currency": "Valuta",                   # or "Devise", "Měna", "Currency"
     #   "email": "Email",
     #   ...
     # }
@@ -44,7 +44,8 @@ class ImportTemplate(Base):
     # File format hints
     delimiter: Mapped[str | None] = mapped_column(String(5), nullable=True)  # , or ;
     date_format: Mapped[str | None] = mapped_column(String(30), nullable=True)  # DD.MM.YYYY etc.
-    number_format: Mapped[str | None] = mapped_column(String(20), nullable=True)  # czech | standard
+    decimal_separator: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "." or ","
+    thousands_separator: Mapped[str | None] = mapped_column(String(5), nullable=True)  # " ", ".", ",", or None
     encoding: Mapped[str | None] = mapped_column(String(30), nullable=True)  # utf-8, windows-1250
 
     # Usage tracking
