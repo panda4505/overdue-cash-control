@@ -14,6 +14,7 @@ LEGAL_SUFFIXES: list[str] = [
     "a.s.",
     "k.s.",
     "v.o.s.",
+    "sro",
     # German
     "gmbh & co. ohg",
     "gmbh & co. kg",
@@ -38,11 +39,14 @@ LEGAL_SUFFIXES: list[str] = [
     "s.a.s.",
     "s.n.c.",
     "s.s.",
+    "srl",
+    "spa",
     # Spanish
     "s.l.u.",
     "s.l.",
     "s.a.",
     "s.c.",
+    "sl",
     # English
     "limited",
     "ltd.",

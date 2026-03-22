@@ -40,3 +40,24 @@ def test_normalize_invoice_number(raw: str, expected: str):
 )
 def test_normalize_customer_name(raw: str, expected: str):
     assert normalize_customer_name(raw) == expected
+
+
+class TestDotlessSuffixNormalization:
+    """Dotless legal suffix variants normalize the same as dotted ones."""
+
+    def test_czech_sro_dotless(self):
+        assert normalize_customer_name("Acme SRO") == normalize_customer_name("Acme s.r.o.")
+
+    def test_italian_srl_dotless(self):
+        assert normalize_customer_name("Acme SRL") == normalize_customer_name("Acme S.R.L.")
+
+    def test_italian_spa_dotless(self):
+        assert normalize_customer_name("Fiat SpA") == normalize_customer_name("Fiat S.p.A.")
+
+    def test_spanish_sl_dotless(self):
+        assert normalize_customer_name("Empresa SL") == normalize_customer_name("Empresa S.L.")
+
+    def test_spa_not_stripped_from_middle(self):
+        """'spa' suffix must not match inside words."""
+        result = normalize_customer_name("Sparrow Industries")
+        assert "sparrow" in result

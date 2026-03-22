@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -172,3 +173,71 @@ class TestImportsRouter:
         )
 
         assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_confirm_accepts_merge_decisions(self, test_client, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv_content = (
+            "Invoice Number,Client Name,Due Date,Amount Due,Total Amount\n"
+            f"INV-001,Acme Ltd.,{due_str},100.00,100.00\n"
+        ).encode("utf-8")
+
+        upload_resp = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            files={"file": ("test.csv", csv_content, "text/csv")},
+        )
+
+        assert upload_resp.status_code == 200
+        import_id = upload_resp.json()["import_id"]
+        mapping = {
+            mapping["target_field"]: mapping["source_column"]
+            for mapping in upload_resp.json()["preview"]["mapping"]["mappings"]
+        }
+
+        confirm_resp = await test_client.post(
+            f"/imports/{import_id}/confirm",
+            json={"mapping": mapping, "scope_type": "unknown", "merge_decisions": {}},
+        )
+
+        assert confirm_resp.status_code == 200
+        assert "customers_merged" in confirm_resp.json()
+
+    @pytest.mark.asyncio
+    async def test_confirm_invalid_merge_decision_returns_400(
+        self,
+        test_client,
+        db_session,
+        test_account,
+    ):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv_content = (
+            "Invoice Number,Client Name,Due Date,Amount Due,Total Amount\n"
+            f"INV-001,Acme Ltd.,{due_str},100.00,100.00\n"
+        ).encode("utf-8")
+
+        upload_resp = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            files={"file": ("test.csv", csv_content, "text/csv")},
+        )
+
+        assert upload_resp.status_code == 200
+        import_id = upload_resp.json()["import_id"]
+        mapping = {
+            mapping["target_field"]: mapping["source_column"]
+            for mapping in upload_resp.json()["preview"]["mapping"]["mappings"]
+        }
+
+        fake_id = str(uuid.uuid4())
+        confirm_resp = await test_client.post(
+            f"/imports/{import_id}/confirm",
+            json={
+                "mapping": mapping,
+                "scope_type": "unknown",
+                "merge_decisions": {"acme": fake_id},
+            },
+        )
+
+        assert confirm_resp.status_code == 400
+        assert "unknown customer ID" in confirm_resp.json()["detail"]

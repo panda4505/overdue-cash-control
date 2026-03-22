@@ -420,6 +420,537 @@ class TestMappingValidation:
         with pytest.raises(ValueError, match="Required fields missing"):
             await confirm_import(db_session, import_id, mapping)
 
+
+class TestFuzzyMerge:
+    """Integration tests for fuzzy customer matching in confirm_import."""
+
+    @pytest.mark.asyncio
+    async def test_exact_match_unchanged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-002", "Acme Ltd.", due_str, "50.00", "50.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="exact-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="exact-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_reused"] == 1
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_accent_variant_auto_merge(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Société Générale", due_str, "1000.00", "1000.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="accent-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Societe Generale", due_str, "500.00", "500.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="accent-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_merged"] == 1
+        assert summary["customers_created"] == 0
+
+        customer = customers[0]
+        assert isinstance(customer.merge_history, list)
+        assert len(customer.merge_history) == 1
+        assert customer.merge_history[0]["variant"] == "Societe Generale"
+        assert customer.merge_history[0]["match_type"] == "name_similarity"
+
+    @pytest.mark.asyncio
+    async def test_vat_id_merge(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount", "VAT ID"],
+            [["INV-001", "Alpha Corp.", due_str, "100.00", "100.00", "FR12345678901"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="vat-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount", "VAT ID"],
+            [["INV-002", "Alpha Corporation France", due_str, "200.00", "200.00", "FR12345678901"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="vat-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_merged"] == 1
+
+    @pytest.mark.asyncio
+    async def test_merge_history_reuse_no_duplicate_merge(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Société Générale", due_str, "1000.00", "1000.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="hist-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Societe Generale", due_str, "500.00", "500.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="hist-2.csv"
+        )
+        summary2 = await confirm_import(db_session, id2, map2)
+        assert summary2["customers_merged"] == 1
+
+        csv3 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-003", "Societe Generale", due_str, "300.00", "300.00"]],
+        )
+        id3, map3, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv3, filename="hist-3.csv"
+        )
+        summary3 = await confirm_import(db_session, id3, map3)
+
+        assert summary3["customers_merged"] == 0
+        assert summary3["customers_reused"] == 1
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+
+        customer = customers[0]
+        assert isinstance(customer.merge_history, list)
+        assert len(customer.merge_history) == 1
+
+        merge_activities = (
+            await db_session.execute(
+                select(Activity).where(
+                    Activity.account_id == test_account.id,
+                    Activity.action_type == "customer_merged",
+                )
+            )
+        ).scalars().all()
+
+        assert len(merge_activities) == 1
+
+    @pytest.mark.asyncio
+    async def test_user_confirmed_merge_decision(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Beta Services", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="decision-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        customer = await db_session.scalar(
+            select(Customer).where(Customer.account_id == test_account.id)
+        )
+        assert customer is not None
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Beta Consulting Services", due_str, "200.00", "200.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="decision-2.csv"
+        )
+
+        normalized_name = normalize_customer_name("Beta Consulting Services")
+        summary = await confirm_import(
+            db_session,
+            id2,
+            map2,
+            merge_decisions={normalized_name: str(customer.id)},
+        )
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_merged"] == 1
+
+    @pytest.mark.asyncio
+    async def test_invalid_merge_decision_rejected(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Some Company", due_str, "100.00", "100.00"]],
+        )
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="invalid-decision.csv"
+        )
+
+        fake_id = str(uuid.uuid4())
+        with pytest.raises(ValueError, match="unknown customer ID"):
+            await confirm_import(
+                db_session,
+                import_id,
+                mapping,
+                merge_decisions={"some company": fake_id},
+            )
+
+    @pytest.mark.asyncio
+    async def test_no_merge_decision_creates_new(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Gamma Tech", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="nomerge-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Delta Industries", due_str, "200.00", "200.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="nomerge-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 2
+        assert summary["customers_created"] == 1
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_medium_confidence_without_merge_decision_creates_new(
+        self,
+        db_session,
+        test_account,
+    ):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Beta Services", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="medium-nodecision-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Beta Consulting Services", due_str, "200.00", "200.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="medium-nodecision-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 2
+        assert summary["customers_created"] == 1
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_related_but_distinct_not_auto_merged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Global Corp France", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="related-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Global Corp Germany", due_str, "200.00", "200.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="related-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 2
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_customer_merged_activity_created(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Société Générale", due_str, "1000.00", "1000.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="activity-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Societe Generale", due_str, "500.00", "500.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="activity-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        merge_activities = (
+            await db_session.execute(
+                select(Activity).where(
+                    Activity.account_id == test_account.id,
+                    Activity.action_type == "customer_merged",
+                )
+            )
+        ).scalars().all()
+
+        assert len(merge_activities) == 1
+        assert merge_activities[0].details["merged_variant"] == "Societe Generale"
+
+    @pytest.mark.asyncio
+    async def test_change_set_records_merge(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Société Générale", due_str, "1000.00", "1000.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="cs-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Societe Generale", due_str, "500.00", "500.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="cs-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        import_record = await db_session.get(ImportRecord, id2)
+        assert import_record is not None
+        assert import_record.change_set is not None
+        assert len(import_record.change_set["customers_merged"]) == 1
+        assert import_record.change_set["customers_merged"][0]["variant"] == "Societe Generale"
+
+    @pytest.mark.asyncio
+    async def test_suffix_variant_exact_match_not_fuzzy(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Acme S.R.L.", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="suffix-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Acme SRL", due_str, "200.00", "200.00"]],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="suffix-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_reused"] == 1
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_preview_returned(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Société Générale", due_str, "1000.00", "1000.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="preview-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-002", "Societe Generale", due_str, "500.00", "500.00"]],
+        )
+        result = await create_pending_import(
+            db=db_session,
+            account_id=test_account.id,
+            file_bytes=csv2,
+            filename="preview-2.csv",
+        )
+
+        assert "fuzzy_matches" in result
+
+    @pytest.mark.asyncio
+    async def test_confirm_returns_customers_merged_key(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="compat.csv"
+        )
+        summary = await confirm_import(db_session, id1, map1)
+
+        assert "customers_merged" in summary
+        assert summary["customers_merged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_same_import_fuzzy_dedup(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [
+                ["INV-001", "Société Générale", due_str, "1000.00", "1000.00"],
+                ["INV-002", "Societe Generale", due_str, "500.00", "500.00"],
+            ],
+        )
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="same-import-dedup.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+        assert len(customers) == 1
+
+        invoices = (
+            await db_session.execute(
+                select(Invoice).where(Invoice.account_id == test_account.id)
+            )
+        ).scalars().all()
+        assert len(invoices) == 2
+        assert invoices[0].customer_id == invoices[1].customer_id
+
+        assert summary["customers_created"] == 1
+        assert summary["customers_merged"] == 1
+
+    @pytest.mark.asyncio
+    async def test_same_import_vat_backfill_visibility(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+
+        csv1 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+            [["INV-001", "Alpha Corp", due_str, "100.00", "100.00"]],
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="vat-backfill-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        customer = await db_session.scalar(
+            select(Customer).where(Customer.account_id == test_account.id)
+        )
+        assert customer is not None
+        assert customer.vat_id is None
+
+        csv2 = _build_csv(
+            ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount", "VAT ID"],
+            [
+                ["INV-002", "Alpha Corp", due_str, "200.00", "200.00", "FR99999999999"],
+                ["INV-003", "Alpha Corporation FR", due_str, "300.00", "300.00", "FR99999999999"],
+            ],
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="vat-backfill-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        customers = (
+            await db_session.execute(
+                select(Customer).where(Customer.account_id == test_account.id)
+            )
+        ).scalars().all()
+
+        assert len(customers) == 1
+        assert summary["customers_merged"] == 1
+        assert summary["customers_created"] == 0
+
     @pytest.mark.asyncio
     async def test_amount_fallback_accepted(self, db_session, test_account):
         import_id, mapping, _ = await _create_and_get_pending(db_session, test_account)

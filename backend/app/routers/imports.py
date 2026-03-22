@@ -22,6 +22,11 @@ class ConfirmImportRequest(BaseModel):
 
     mapping: dict[str, str]
     scope_type: Literal["full_snapshot", "partial", "unknown"] = "unknown"
+    merge_decisions: dict[str, str] | None = None
+    # Keys: normalized customer name from the file
+    # Values: UUID string of existing customer to merge into
+    # Only needed for medium-confidence fuzzy matches the user confirmed.
+    # Omitted or null = no merges for ambiguous matches.
 
 
 @router.post("/{account_id}/imports/upload")
@@ -77,6 +82,7 @@ async def confirm_import_endpoint(
             import_id=import_id,
             confirmed_mapping=body.mapping,
             scope_type=body.scope_type,
+            merge_decisions=body.merge_decisions,
         )
     except ValueError as exc:
         message = str(exc)

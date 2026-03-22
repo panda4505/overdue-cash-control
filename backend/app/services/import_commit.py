@@ -19,6 +19,13 @@ from app.models.activity import Activity
 from app.models.customer import Customer
 from app.models.import_record import ImportRecord
 from app.models.invoice import Invoice
+from app.services.customer_matching import (
+    ExistingCustomerInfo,
+    FileCustomer,
+    find_best_match,
+    find_fuzzy_matches,
+    fuzzy_match_result_to_dict,
+)
 from app.services.file_parser import parse_file
 from app.services.ingestion import ingest_file
 from app.services.normalization import normalize_customer_name, normalize_invoice_number
@@ -43,6 +50,7 @@ async def create_pending_import(
             "import_id": None,
             "preview": result.to_dict(),
             "duplicate_warning": None,
+            "fuzzy_matches": None,
         }
 
     duplicate_warning = None
@@ -89,10 +97,17 @@ async def create_pending_import(
         shutil.rmtree(upload_dir, ignore_errors=True)
         raise
 
+    fuzzy_matches_preview: dict[str, Any] | None = None
+    try:
+        fuzzy_matches_preview = await _compute_fuzzy_preview(db, account_id, result)
+    except Exception:
+        pass
+
     return {
         "import_id": import_id,
         "preview": result.to_dict(),
         "duplicate_warning": duplicate_warning,
+        "fuzzy_matches": fuzzy_matches_preview,
     }
 
 
@@ -101,6 +116,7 @@ async def confirm_import(
     import_id: uuid.UUID,
     confirmed_mapping: dict[str, str],
     scope_type: str = "unknown",
+    merge_decisions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Confirm a pending import and commit invoices, customers, and activity."""
 
@@ -167,6 +183,51 @@ async def confirm_import(
         else:
             incoming_normalized[norm] = row_index
 
+    existing_customers_query = select(Customer).where(
+        Customer.account_id == import_record.account_id,
+        Customer.deleted_at.is_(None),
+    )
+    existing_customers_result = await db.execute(existing_customers_query)
+    existing_customers_list = existing_customers_result.scalars().all()
+
+    existing_customer_by_normalized: dict[str, Customer] = {}
+    existing_customer_by_id: dict[str, Customer] = {}
+    for customer in existing_customers_list:
+        existing_customer_by_normalized[customer.normalized_name] = customer
+        existing_customer_by_id[str(customer.id)] = customer
+
+    merge_history_index: dict[str, Customer] = {}
+    for customer in existing_customers_list:
+        if isinstance(customer.merge_history, list):
+            for entry in customer.merge_history:
+                normalized_variant = entry.get("normalized_name")
+                if normalized_variant:
+                    merge_history_index[normalized_variant] = customer
+
+    existing_customer_infos: list[ExistingCustomerInfo] = []
+    existing_customer_info_by_id: dict[str, ExistingCustomerInfo] = {}
+    for customer in existing_customers_list:
+        info = ExistingCustomerInfo(
+            customer_id=str(customer.id),
+            normalized_name=customer.normalized_name,
+            display_name=customer.name,
+            vat_id=customer.vat_id,
+            merge_history=customer.merge_history if isinstance(customer.merge_history, list) else None,
+        )
+        existing_customer_infos.append(info)
+        existing_customer_info_by_id[str(customer.id)] = info
+
+    resolved_merges: dict[str, Customer] = {}
+    if merge_decisions:
+        for normalized_name, customer_id in merge_decisions.items():
+            target_customer = existing_customer_by_id.get(customer_id)
+            if target_customer is None:
+                raise ValueError(
+                    f"merge_decisions references unknown customer ID '{customer_id}' "
+                    f"for name '{normalized_name}'. Customer must exist and belong to this account."
+                )
+            resolved_merges[normalized_name] = target_customer
+
     # Track which existing invoices appear in this import file
     seen_invoice_numbers: set[str] = set()
 
@@ -180,6 +241,7 @@ async def confirm_import(
     invoices_unchanged = 0
     customers_created = 0
     customers_reused = 0
+    customers_merged = 0
     errors = 0
 
     change_set: dict[str, list[dict[str, Any]]] = {
@@ -254,14 +316,39 @@ async def confirm_import(
         seen_invoice_numbers.add(normalized_invoice_number)
 
         customer = customer_cache.get(normalized_name)
+
         if customer is None:
-            customer_query = select(Customer).where(
-                Customer.account_id == import_record.account_id,
-                Customer.normalized_name == normalized_name,
-                Customer.deleted_at.is_(None),
+            customer = existing_customer_by_normalized.get(normalized_name)
+
+        is_new_merge = False
+        merge_match_type: str | None = None
+
+        if customer is None:
+            history_match = merge_history_index.get(normalized_name)
+            if history_match is not None:
+                customer = history_match
+
+        if customer is None:
+            file_customer = FileCustomer(
+                normalized_name=normalized_name,
+                raw_name=str(raw_customer_name).strip(),
+                vat_id=_clean_optional(row.get("vat_id")),
             )
-            customer_result = await db.execute(customer_query)
-            customer = customer_result.scalar_one_or_none()
+            match = find_best_match(file_customer, existing_customer_infos)
+
+            if match is not None:
+                if match.confidence == "high":
+                    target = existing_customer_by_id.get(match.existing_customer_id)
+                    if target is not None:
+                        customer = target
+                        is_new_merge = True
+                        merge_match_type = match.match_type
+                elif match.confidence == "medium":
+                    decision_match = resolved_merges.get(normalized_name)
+                    if decision_match is not None:
+                        customer = decision_match
+                        is_new_merge = True
+                        merge_match_type = "user_confirmed"
 
         if customer is None:
             customer = Customer(
@@ -290,6 +377,19 @@ async def confirm_import(
                     },
                 }
             )
+
+            existing_customer_by_normalized[normalized_name] = customer
+            existing_customer_by_id[str(customer.id)] = customer
+            new_info = ExistingCustomerInfo(
+                customer_id=str(customer.id),
+                normalized_name=customer.normalized_name,
+                display_name=customer.name,
+                vat_id=customer.vat_id,
+                merge_history=None,
+            )
+            existing_customer_infos.append(new_info)
+            existing_customer_info_by_id[str(customer.id)] = new_info
+            existing_customers_list.append(customer)
         else:
             customers_reused += 1
             if not customer.vat_id:
@@ -300,6 +400,55 @@ async def confirm_import(
                 customer.email = _clean_optional(row.get("email"))
             if not customer.phone:
                 customer.phone = _clean_optional(row.get("phone"))
+
+            info = existing_customer_info_by_id.get(str(customer.id))
+            if info is not None:
+                info.vat_id = customer.vat_id
+
+        if is_new_merge and normalized_name not in customer_cache:
+            customers_merged += 1
+
+            existing_history = customer.merge_history if isinstance(customer.merge_history, list) else []
+            customer.merge_history = existing_history + [
+                {
+                    "variant": str(raw_customer_name).strip(),
+                    "normalized_name": normalized_name,
+                    "merged_at": datetime.now(timezone.utc).isoformat(),
+                    "match_type": merge_match_type,
+                }
+            ]
+
+            change_set["customers_merged"].append(
+                {
+                    "customer_id": str(customer.id),
+                    "variant": str(raw_customer_name).strip(),
+                    "merged_into": customer.name,
+                    "match_type": merge_match_type,
+                }
+            )
+
+            merge_activity = Activity(
+                account_id=import_record.account_id,
+                import_id=import_record.id,
+                customer_id=customer.id,
+                action_type="customer_merged",
+                details={
+                    "merged_variant": str(raw_customer_name).strip(),
+                    "merged_into_customer": str(customer.id),
+                    "merged_into_name": customer.name,
+                    "match_type": merge_match_type,
+                },
+                performed_by="system",
+            )
+            db.add(merge_activity)
+
+            merge_history_index[normalized_name] = customer
+
+            info = existing_customer_info_by_id.get(str(customer.id))
+            if info is not None:
+                info.merge_history = (
+                    customer.merge_history if isinstance(customer.merge_history, list) else None
+                )
 
         customer_cache[normalized_name] = customer
 
@@ -585,6 +734,7 @@ async def confirm_import(
             "invoices_unchanged": invoices_unchanged,
             "customers_created": customers_created,
             "customers_reused": customers_reused,
+            "customers_merged": customers_merged,
             "errors": errors,
         },
         performed_by="system",
@@ -608,9 +758,92 @@ async def confirm_import(
         "invoices_unchanged": invoices_unchanged,
         "customers_created": customers_created,
         "customers_reused": customers_reused,
+        "customers_merged": customers_merged,
         "errors": errors,
         "warnings": warnings,
     }
+
+
+async def _compute_fuzzy_preview(
+    db: AsyncSession,
+    account_id: uuid.UUID,
+    ingestion_result: Any,
+) -> dict[str, Any] | None:
+    """Extract unique customer names from parsed data and run fuzzy matching."""
+
+    if ingestion_result.dataframe is None or ingestion_result.mapping is None:
+        return None
+
+    customer_name_column: str | None = None
+    vat_id_column: str | None = None
+    for mapping in ingestion_result.mapping.mappings:
+        if mapping.get("target_field") == "customer_name":
+            customer_name_column = mapping.get("source_column")
+        elif mapping.get("target_field") == "vat_id":
+            vat_id_column = mapping.get("source_column")
+
+    if (
+        customer_name_column is None
+        or customer_name_column not in ingestion_result.dataframe.columns
+    ):
+        return None
+
+    seen_normalized: set[str] = set()
+    file_customers: list[FileCustomer] = []
+    for _, row in ingestion_result.dataframe.iterrows():
+        raw_name = row.get(customer_name_column)
+        if raw_name is None or pd.isna(raw_name) or str(raw_name).strip() == "":
+            continue
+
+        normalized_name = normalize_customer_name(str(raw_name))
+        if not normalized_name or normalized_name in seen_normalized:
+            continue
+
+        seen_normalized.add(normalized_name)
+
+        raw_vat_id: str | None = None
+        if vat_id_column and vat_id_column in ingestion_result.dataframe.columns:
+            vat_value = row.get(vat_id_column)
+            if vat_value is not None and not pd.isna(vat_value) and str(vat_value).strip():
+                raw_vat_id = str(vat_value).strip()
+
+        file_customers.append(
+            FileCustomer(
+                normalized_name=normalized_name,
+                raw_name=str(raw_name).strip(),
+                vat_id=raw_vat_id,
+            )
+        )
+
+    if not file_customers:
+        return None
+
+    existing_query = select(Customer).where(
+        Customer.account_id == account_id,
+        Customer.deleted_at.is_(None),
+    )
+    existing_result = await db.execute(existing_query)
+    existing_customers = existing_result.scalars().all()
+
+    if not existing_customers:
+        return None
+
+    existing_infos = [
+        ExistingCustomerInfo(
+            customer_id=str(customer.id),
+            normalized_name=customer.normalized_name,
+            display_name=customer.name,
+            vat_id=customer.vat_id,
+            merge_history=customer.merge_history if isinstance(customer.merge_history, list) else None,
+        )
+        for customer in existing_customers
+    ]
+
+    fuzzy_result = find_fuzzy_matches(file_customers, existing_infos)
+    if not fuzzy_result.auto_merges and not fuzzy_result.candidates:
+        return None
+
+    return fuzzy_match_result_to_dict(fuzzy_result)
 
 
 def _validate_confirmed_mapping(

@@ -202,6 +202,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 20 | Raw invoice_number immutable after first seen | Normalized key is for matching; display string is the original formatting from the first import. Subsequent imports do not overwrite Invoice.invoice_number. | 2026-03-22 |
 | 21 | Ambiguous DB duplicates: warn-and-skip, not fail-fast | If multiple existing invoices share the same normalized_invoice_number, the matching row is skipped with a warning rather than failing the entire import. Revisit when data-repair tooling exists. | 2026-03-22 |
 | 22 | Customer aggregates recalculated from DB, not incremental | After the row loop, total_outstanding and invoice_count are recomputed by querying actual current invoices for all affected customers (including reassignment old customers). possibly_paid invoices remain in outstanding total. | 2026-03-22 |
+| 23 | Same-entity resolution and relationship intelligence are architecturally separate | ST3 implements same-entity matching only: name variant dedup (Jaro-Winkler on diacritic-folded names), VAT ID dedup, confirmed alias memory (merge_history). Relationship intelligence (parent-subsidiary, group membership, commercial grouping) is a future capability requiring a separate model and UX, not an extension of merge_history. These must never be conflated. | 2026-03-22 |
+| 24 | Diacritic folding is comparison-time only | fold_diacritics() strips accents for Jaro-Winkler comparison. Stored normalized_name and merge_history.normalized_name preserve accents. This ensures "Société Générale" and "Societe Generale" score 1.0 on JW without changing stored data. | 2026-03-22 |
+| 25 | merge_history reuse is deterministic reuse, not a new merge | When a known alias is found in merge_history, it increments customers_reused only. No duplicate merge_history entry, no new customer_merged Activity, no change_set entry. Only first-time alias discovery (VAT, JW, user_confirmed) creates merge events. | 2026-03-22 |
 
 ## Queued Items
 
@@ -217,6 +220,8 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Recompute Customer.last_invoice_date alongside aggregate recalculation | Post-M3 | ST2 recalculates total_outstanding and invoice_count but not last_invoice_date. After disappearance or reassignment, last_invoice_date on the old customer could reference an invoice no longer active there. Low severity for v1. |
 | Tighten ambiguous-duplicate handling from warn-and-skip to fail-fast | Post data-repair tooling | Decision #21. Revisit when users have manual invoice merge/delete tooling. |
 | Python 3.14 dependency warnings (OpenAI/Pydantic V1 internals, Starlette async) | Maintenance | Non-blocking. Observed during ST2 local validation. |
+| Customer relationship/group intelligence | Post-M3 (likely M6+) | Separate from identity resolution. Likely requires CustomerGroup model with explicit membership, suggested-link workflow, and distinct UI. Not an extension of merge_history or fuzzy matching. See decision #23. |
+| Multi-candidate fuzzy matching for user confirmation | Post-M3 | Current ST3 returns single best candidate per file customer. Future: return top N for richer confirmation UX. |
 
 ## Infrastructure
 
