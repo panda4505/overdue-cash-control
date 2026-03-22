@@ -6,6 +6,15 @@
 >
 > **Note:** Some items in this document are directional hypotheses inferred from implementation work, not validated market facts.
 
+## How to use this file
+
+- Review this file at the start of every milestone framing pass
+- Review again at the start of each sub-task framing pass
+- Use it to inform scope, not to silently expand scope
+- If an item becomes relevant, explicitly decide whether it is: in current scope, deferred, or ready for roadmap graduation
+- Once an opportunity gets milestone ownership in `docs/trajectory.md`, mark it as graduated or remove it
+- This file is for strategic/product/commercial ideas, not detailed engineering TODOs
+
 ## Why this matters now
 
 Entity resolution is becoming a core trust layer of the product. What started as "deduplicate customer names during import" has revealed a deeper value: **safe, intelligent resolution of messy customer identity data** — a recurring problem across many European SMB workflows and often handled poorly or inconsistently by typical AR tooling.

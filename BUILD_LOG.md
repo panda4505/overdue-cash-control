@@ -20,7 +20,7 @@
 - **Latest validation:** Full backend 295/295. No regressions.
 - **Blockers:** None
 - **Last session:** 2026-03-22
-- **Next:** M3-ST4 — Anomaly detection
+- **Next:** M3-ST4 — framing pass, then anomaly detection
 
 ## Implementation Map
 
@@ -216,6 +216,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 24 | Diacritic folding is comparison-time only | fold_diacritics() strips accents for Jaro-Winkler comparison. Stored normalized_name and merge_history.normalized_name preserve accents. This ensures "Société Générale" and "Societe Generale" score 1.0 on JW without changing stored data. | 2026-03-22 |
 | 25 | merge_history reuse is deterministic reuse, not a new merge | When a known alias is found in merge_history, it increments customers_reused only. No duplicate merge_history entry, no new customer_merged Activity, no change_set entry. Only first-time alias discovery (VAT, JW, user_confirmed) creates merge events. | 2026-03-22 |
 | 26 | Auto-merge restricted to typo-like near-identity only (HIGH_THRESHOLD=0.98) | Qualifier-based near-collisions (country, branch, division, letter variants scoring 0.92–0.97) must not auto-merge. Deterministic paths (exact, VAT, merge_history) handle common cases at score 1.0. JW auto-merge at 0.98 catches only obvious single-char typos on longer names. Conservative first confirmation is acceptable because merge_history compounds value over time. Do not lower threshold without regression tests for both typo positives and near-collision negatives. | 2026-03-22 |
+| 27 | Layered memory model | Repo uses layered memory: `BUILD_LOG.md` (concise operating memory / current state / decisions / queued items), `docs/opportunities.md` (strategic/commercial discoveries not yet committed), `docs/trajectory.md` (committed roadmap only). Opportunities stay out of trajectory until they get milestone ownership. | 2026-03-22 |
+| 28 | Mandatory framing pass before each milestone and sub-task | Every new milestone and sub-task starts with a framing pass before implementation prompting. Framing must review: current BUILD_LOG state, completed-milestone learnings, relevant opportunities.md items, scope boundaries, invariants, risks, what is in scope vs deferred. No Codex prompt until framing is acceptable. | 2026-03-22 |
+| 29 | Repo-frozen AI collaboration workflow | Repo uses explicit roles: Lorenzo (orchestrator/decider), Claude (architect/prompt writer), GPT (senior reviewer/challenger), Codex (implementer). Claude initiates, GPT reviews aggressively including framing. Full process documented in `docs/ai-engineering-workflow.md`. | 2026-03-22 |
 
 ## Queued Items
 
@@ -234,6 +237,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Customer relationship/group intelligence | Post-M3 (likely M6+) | Separate from identity resolution. Likely requires CustomerGroup model with explicit membership, suggested-link workflow, and distinct UI. Not an extension of merge_history or fuzzy matching. See decision #23. |
 | Multi-candidate fuzzy matching for user confirmation | Post-M3 | Current ST3 returns single best candidate per file customer. Future: return top N for richer confirmation UX. |
 | docs/opportunities.md maintenance | Ongoing | Strategic/commercial opportunities discovered during build. Update when major product insights emerge. See docs/opportunities.md. |
+| docs/ai-engineering-workflow.md maintenance | Ongoing | Update when workflow learnings emerge during build. |
 
 ## Infrastructure
 
