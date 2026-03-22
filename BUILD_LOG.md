@@ -20,7 +20,7 @@
 
 - **Milestone:** 3 of 10 — IN PROGRESS
 - **Sub-task:** M3-ST1 COMPLETE, M3-ST2 next
-- **Status:** M3-ST1 (first import commit path) is done. 221 tests green. Users can upload a file to an account-scoped endpoint, receive a preview (even with imperfect mapping), then confirm to commit Customers, Invoices, ImportRecord, and Activity to PostgreSQL. Normalization (EU legal suffix stripping), mapping validation, duplicate hash detection, change_set for rollback, and audit fields all implemented. Existing stateless `POST /upload` preview is untouched.
+- **Status:** M3-ST1 (first import commit path) is done. 221 tests green. Users can upload a file to an account-scoped endpoint and receive a preview even with imperfect mapping. Upload creates a pending `ImportRecord`; confirm then validates the mapping, commits Customers, Invoices, and Activity, and updates the `ImportRecord` in PostgreSQL. Invoice/customer normalization, duplicate hash detection, change_set for rollback, and audit fields are implemented. Existing stateless `POST /upload` preview is untouched.
 - **Blockers:** None
 - **Last session:** 2026-03-22
 
@@ -30,7 +30,7 @@
 
 ```
 backend/
-  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook + upload + imports router registration. CHANGED in session 10: added imports_router and confirm_router.
+  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook + upload + import lifecycle route registration. CHANGED in session 10: added account-scoped import upload and confirm route registration.
   app/config.py         — env var loading for DB, LLM, Resend, auth, frontend, UPLOAD_DIR, TEST_DATABASE_URL. CHANGED in session 10: added UPLOAD_DIR and TEST_DATABASE_URL settings.
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
@@ -115,7 +115,7 @@ README.md               — project overview
     - `create_pending_import()`: calls `ingest_file()`, gates on parse success (not mapping success — users can fix mapping before confirming), checks duplicate SHA-256 hash, saves file to disk (`UPLOAD_DIR/{account_id}/{import_id}/filename`), creates `ImportRecord(status=pending_preview)`, explicit `await db.commit()` with file cleanup on failure.
     - `confirm_import()`: validates confirmed mapping (source columns exist, required targets present, no duplicate source assignments), re-parses stored file, validates ALL row-level fields before customer creation (no orphan customers), creates Customer (exact normalized name match within account, with contact enrichment on reuse), creates Invoice (with `days_overdue`, `first_overdue_at`, `normalized_invoice_number`), builds `change_set` with repo-aligned keys (`created`, `updated`, `disappeared`, `customers_created`, `customers_merged`), populates `ImportRecord.errors` and `warnings_text`, creates `Activity(action_type=import_committed)`, updates `Account.first_import_at`/`last_import_at`.
   - Created `backend/app/routers/imports.py`: `POST /accounts/{account_id}/imports/upload` (account-scoped, explicit 404 on missing account) and `POST /imports/{import_id}/confirm` (ValueError→404/409/400 mapping).
-  - Modified `backend/app/main.py`: registered `imports_router` and `confirm_router`.
+  - Modified `backend/app/main.py`: registered the import lifecycle routes (account-scoped upload + confirm).
   - Modified `backend/app/config.py`: added `UPLOAD_DIR` and `TEST_DATABASE_URL` settings.
   - Modified `backend/requirements.txt`: added `pytest-asyncio==1.3.0`.
   - Created `backend/tests/conftest.py`: DB test fixtures with per-test engine using `NullPool` (no connection pooling) to avoid asyncpg cross-event-loop errors. Truncate-based cleanup (`TRUNCATE ... RESTART IDENTITY CASCADE`) after each test. `test_account` factory, `_override_upload_dir` autouse fixture, `test_client` with `get_db` override. Requires `TEST_DATABASE_URL` — `RuntimeError` if missing or matches `DATABASE_URL`.
