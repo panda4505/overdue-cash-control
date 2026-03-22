@@ -1006,9 +1006,10 @@ The product is ready for first paying customers when:
 2.  **Wedge Definition.** Canonical wedge statement, scope boundary,
     input mechanisms, source-of-truth statement.
 
-3.  **Build Trajectory.** Ten milestones from architecture to launch,
-    session plans, exit gates, risk register, working model for building
-    with AI engineers (Codex + Claude).
+3.  **Build Trajectory** (`docs/trajectory.md`). Ten milestones from
+    architecture to launch, session plans, exit gates, risk register.
+    AI collaboration workflow is documented separately in
+    `docs/ai-engineering-workflow.md`.
 
 4.  **Architecture Decision Record** (`docs/architecture.md`). Stack choices,
     project structure, Railway architecture, LLM integration design,

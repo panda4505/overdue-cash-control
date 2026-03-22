@@ -229,19 +229,27 @@ Intelligent diff engine
 Fuzzy customer matching
 
 1.  Normalise company names: strip legal suffixes (s.r.o., GmbH, SAS,
-    Ltd), normalise case, trim whitespace.
+    SRL, Ltd, and dotless variants), normalise case, trim whitespace.
 
-2.  Compare using string similarity (Jaro-Winkler or similar) and VAT ID
-    matching.
+2.  Resolution follows a deterministic-first chain: exact normalized
+    name, previously confirmed alias (merge_history), exact VAT/tax ID,
+    then name similarity scoring with diacritic folding.
 
-3.  High-confidence matches (\>90% or matching VAT ID): auto-merge, log
-    the variant.
+3.  High confidence exact or known matches reuse the existing customer.
+    First-time non-exact high-confidence matches (for example exact
+    VAT/tax ID matches or obvious typo-like variants) auto-merge
+    conservatively and are recorded in merge_history.
 
-4.  Medium-confidence (70--90%): present to user for confirmation.
+4.  Ambiguous matches (including country, branch, or division qualifiers)
+    require user confirmation. Conservative — false-positive merges are
+    worse than false negatives.
 
-5.  Low-confidence: create as new customer.
+5.  Low confidence: create as new customer.
 
-6.  Store confirmed merge decisions for future auto-merging.
+6.  Same-entity resolution only. Relationship intelligence
+    (parent/subsidiary, group membership) is deferred.
+
+Exact thresholds tracked in BUILD_LOG decisions and code.
 
 Anomaly detection
 
