@@ -13,7 +13,13 @@ from typing import Any
 
 import jellyfish
 
-HIGH_THRESHOLD = 0.90
+# Auto-merge restricted to very high-confidence typo-like variants only.
+# Accent variants score 1.0 after diacritic folding. Single-char typos on
+# longer names score 0.98–0.99. Qualifier-based near-collisions (country,
+# branch, division, letter) score 0.92–0.97 and MUST remain medium confidence
+# for user review. Do not lower this without adding regression tests for both
+# typo positives and near-collision negatives.
+HIGH_THRESHOLD = 0.98
 LOW_THRESHOLD = 0.70
 
 _COMBINING_MARKS = re.compile(r"[\u0300-\u036f]")

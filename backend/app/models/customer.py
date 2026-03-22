@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime, date
+from typing import Any
 
 from sqlalchemy import String, DateTime, Date, Integer, Numeric, Text, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -38,8 +39,9 @@ class Customer(Base):
     # Matching and risk signals
     first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    merge_history: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    # merge_history example: [{"variant": "ACME SRO", "merged_at": "2026-03-20T12:00:00Z"}]
+    merge_history: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # merge_history stores confirmed alias variants as a list of dicts.
+    # Example: [{"variant": "ACME SRO", "normalized_name": "acme sro", "merged_at": "2026-03-22T12:00:00Z", "match_type": "name_similarity"}]
 
     # Notes and state
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

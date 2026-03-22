@@ -317,7 +317,13 @@ class TestConfirmImport:
         assert len(record.change_set["created"]) == summary["invoices_created"]
         assert record.change_set["updated"] == []
         assert record.change_set["disappeared"] == []
-        assert record.change_set["customers_merged"] == []
+        assert isinstance(record.change_set["customers_merged"], list)
+        assert len(record.change_set["customers_merged"]) == summary["customers_merged"]
+        for entry in record.change_set["customers_merged"]:
+            assert "customer_id" in entry
+            assert "variant" in entry
+            assert "merged_into" in entry
+            assert "match_type" in entry
         assert all("invoice_id" in item and "data" in item for item in record.change_set["created"])
 
     @pytest.mark.asyncio

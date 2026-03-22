@@ -280,6 +280,79 @@ class TestJaroWinklerMatching:
         assert match is None or isinstance(match, MatchResult)
 
 
+class TestQualifierNearCollisionGuard:
+    """Qualifier-based near-collisions must never auto-merge."""
+
+    def test_single_letter_qualifier_not_auto_merged(self):
+        file_customer = FileCustomer(normalized_name="beta group a", raw_name="Beta Group A")
+        existing_customer = ExistingCustomerInfo(
+            customer_id="cust-1",
+            normalized_name="beta group b",
+            display_name="Beta Group B",
+        )
+
+        match = find_best_match(file_customer, [existing_customer])
+
+        assert match is None or match.confidence != "high"
+
+    def test_branch_direction_qualifier_not_auto_merged(self):
+        file_customer = FileCustomer(normalized_name="techno east", raw_name="Techno East")
+        existing_customer = ExistingCustomerInfo(
+            customer_id="cust-1",
+            normalized_name="techno west",
+            display_name="Techno West",
+        )
+
+        match = find_best_match(file_customer, [existing_customer])
+
+        assert match is None or match.confidence != "high"
+
+    def test_division_number_qualifier_not_auto_merged(self):
+        file_customer = FileCustomer(normalized_name="omega division 1", raw_name="Omega Division 1")
+        existing_customer = ExistingCustomerInfo(
+            customer_id="cust-1",
+            normalized_name="omega division 2",
+            display_name="Omega Division 2",
+        )
+
+        match = find_best_match(file_customer, [existing_customer])
+
+        assert match is None or match.confidence != "high"
+
+    def test_short_region_qualifier_not_auto_merged(self):
+        file_customer = FileCustomer(normalized_name="acme nord", raw_name="Acme Nord")
+        existing_customer = ExistingCustomerInfo(
+            customer_id="cust-1",
+            normalized_name="acme sud",
+            display_name="Acme Sud",
+        )
+
+        match = find_best_match(file_customer, [existing_customer])
+
+        assert match is None or match.confidence != "high"
+
+
+class TestTypoPositiveRegression:
+    """Obvious single-character typos on longer names should still auto-merge."""
+
+    def test_single_char_deletion_typo_auto_merges(self):
+        file_customer = FileCustomer(
+            normalized_name="schneider electric servces",
+            raw_name="Schneider Electric Servces",
+        )
+        existing_customer = ExistingCustomerInfo(
+            customer_id="cust-1",
+            normalized_name="schneider electric services",
+            display_name="Schneider Electric Services",
+        )
+
+        match = find_best_match(file_customer, [existing_customer])
+
+        assert match is not None
+        assert match.confidence == "high"
+        assert match.match_type == "name_similarity"
+
+
 class TestEdgeCases:
     def test_no_existing_customers(self):
         file_customer = FileCustomer(normalized_name="acme", raw_name="Acme")
