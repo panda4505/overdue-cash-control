@@ -8,7 +8,7 @@
 
 - **Product:** Overdue Cash Control — collections workflow for EU SMBs
 - **Builder:** Lorenzo (founder, tester, decision-maker)
-- **AI engineer:** Codex in VS Code (code writing, git) + Claude (architecture, planning, prompt design, reviews)
+- **AI team:** Claude (architecture, prompt design, reviews) + GPT (senior reviewer) + Codex in VS Code (code writing, git). See decision #29 and `docs/ai-engineering-workflow.md`.
 - **Stack:** Python/FastAPI backend, Next.js frontend, PostgreSQL on Railway, OpenAI + DeepSeek LLM, Resend email
 - **Repo:** https://github.com/panda4505/overdue-cash-control
 
@@ -254,6 +254,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 ## Reference Docs
 
 The full product spec lives in these docs (paste relevant sections when needed, not every session):
+- **Docs map** (`docs/README.md`) — doc tiers, reading order, precedence rules, update decision matrix
+- **AI engineering workflow** (`docs/ai-engineering-workflow.md`) — roles, review loop, framing pass, startup/close-out checklists
+- **Opportunities** (`docs/opportunities.md`) — strategic/commercial discoveries not yet committed to roadmap
 - **Product constitution** (`docs/constitution.md`) — governing principles, decision filter, beachhead definition, pricing, exclusions
 - **Wedge definition v1** (`docs/wedge-v1.md`) — canonical wedge statement, scope boundary, input layer, AI role. Aligned with actual build.
 - **Product definition** (`docs/product-definition.md`) — screen-by-screen UX, data model, ingestion/reconciliation/escalation engine specs. Aligned with actual build as of M2 start.
