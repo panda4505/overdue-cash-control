@@ -14,19 +14,23 @@
 
 ## Current State
 
-- **Milestone:** 3 of 10 — COMPLETE
-- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 COMPLETE, M3-ST3 COMPLETE, M3-ST4 COMPLETE
-- **Status:** M3 (Reconciliation & AI Layer) is done. 333 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 72 import commit + 12 imports router + 33 customer matching + 23 anomaly detection). Full reconciliation pipeline: import commit with diff engine, 6-step fuzzy customer matching, 5-type differential anomaly detection.
-- **Latest validation:** Full backend 333/333. No regressions.
+- **Milestone:** 4 of 10 — IN PROGRESS
+- **Sub-task:** M4-ST1 Part 1 (Backend) COMPLETE. M4-ST1 Part 2 (Frontend) next.
+- **Status:** Auth system, template persistence, account isolation, API hardening. 370 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 72 import commit + 12 imports router + 33 customer matching + 23 anomaly detection + 22 auth routes + 9 auth service + 6 template service). All endpoints auth-protected except health, root, auth, webhooks.
+- **Latest validation:** Full backend 370/370 locally. Zero regressions. Verified after Alembic migration applied to test DB.
 - **Blockers:** None
-- **Last session:** 2026-03-22
-- **Next:** M4 — Core UI. Framing pass required.
+- **Last session:** 2026-03-23
+- **Next:** M4-ST1 Part 2 — Frontend app shell, login/register, onboarding, import trust flow screens. Backend is frozen for Part 2 unless frontend reveals a genuine API contract gap.
 
 ## Implementation Map
 
 ### Backend (`backend/app/`)
 
-**FastAPI app** (`main.py`): Routes registered for webhooks, upload, import lifecycle (account-scoped upload + confirm). CORS configured for frontend. Health check at `/health`.
+**FastAPI app** (`main.py`): Routes registered for auth, webhooks, upload, import lifecycle (account-scoped upload + save-template + confirm). CORS configured for frontend. Health check at `/health`. Version 0.2.0. `/test-email` removed.
+
+**Auth** (`routers/auth.py`, `services/auth.py`, `dependencies.py`): Register (email+password only, company_name deferred to onboarding), login, me, update account. Email normalized (trim+lowercase). bcrypt hashing via passlib. JWT via python-jose. `get_current_user` dependency on all protected routes. Account isolation: `current_user.account_id` validated on all account-scoped endpoints.
+
+**Template service** (`services/template_service.py`): Save template via explicit endpoint (idempotent per import — repeated calls update, not duplicate). Find matching template for auto-apply (exact normalized header-set match + delimiter/decimal compatibility + exactly-one-candidate rule). Linked to ImportRecord via template_id.
 
 **Config** (`config.py`): pydantic-settings loading DATABASE_URL, TEST_DATABASE_URL, UPLOAD_DIR, OPENAI_API_KEY, DEEPSEEK_API_KEY, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SECRET_KEY, FRONTEND_URL.
 
@@ -57,17 +61,18 @@
 **LLM client** (`services/llm_client.py`): OpenAI primary (gpt-4o-mini), DeepSeek fallback. Single async function. Provider-agnostic interface.
 
 **Routers:**
-- `routers/upload.py`: `POST /upload` — stateless preview (no DB write)
-- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Validated strictly — unknown customer IDs raise 400.
+- `routers/upload.py`: `POST /upload` — auth-protected stateless preview (no DB write)
+- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/save-template` — persist confirmed mapping for reuse. `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Validated strictly — unknown customer IDs raise 400.
 - `routers/webhooks.py`: Resend inbound email webhook. Downloads attachments, feeds into ingestion pipeline.
 
 ### Database
 
-PostgreSQL 16 on Railway (managed). 2 Alembic migrations applied:
+PostgreSQL 16 on Railway (managed). 3 Alembic migrations in repo:
 - `4a129036b96f`: initial 7 tables
 - `7d3f8c2b1a90`: replace number_format with decimal_separator + thousands_separator on import_templates
+- `a1b2c3d4e5f6`: company_name nullable, existing accounts updated to EUR/Europe/Paris
 
-### Test suite (333 tests)
+### Test suite (370 tests)
 
 - `test_file_parser.py` — 86 tests: 5 CSV + 1 XLSX fixture, encoding fallback, edge cases
 - `test_column_mapper.py` — 48 tests: 6-language dictionary, template, LLM fallback, conflicts
@@ -79,6 +84,9 @@ PostgreSQL 16 on Railway (managed). 2 Alembic migrations applied:
 - `test_imports_router.py` — 12 tests: upload/confirm endpoints, scope_type validation, merge_decisions contract
 - `test_customer_matching.py` — 33 tests: fold_diacritics, merge_history, VAT, Jaro-Winkler, qualifier near-collision guards, typo positive regression, normalization integration
 - `test_anomaly_detection.py` — 23 tests: pure logic module coverage for 5 anomaly types, thresholds, suppression rules, and serialization
+- `test_auth.py` — 22 tests: register/login/me/update account, protected routes, account isolation, `/test-email` removal
+- `test_auth_service.py` — 9 tests: password hashing and JWT token helpers
+- `test_template_service.py` — 6 tests: save-template persistence, idempotency, wrong-account protection, strict auto-apply
 - DB tests require `TEST_DATABASE_URL` (must differ from `DATABASE_URL`). Per-test NullPool engine + TRUNCATE cleanup.
 
 ### Sample data (`sample-data/`)
@@ -111,14 +119,17 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Customer.last_invoice_date is NOT recalculated alongside aggregates — known staleness risk on disappearance/reassignment (deferred fix)
 
 **Open bugs (active):**
-- `routers/webhooks.py`: RESEND_WEBHOOK_SECRET exists in config but webhook does NOT verify signatures. Severity: High.
-- `main.py`: `GET /test-email` is publicly reachable and hardcodes lorenzo.massimo.pandolfo@gmail.com. Severity: Medium.
+- `routers/webhooks.py`: RESEND_WEBHOOK_SECRET exists in config but webhook does NOT verify signatures. Severity: High. Explicitly deferred from M4-ST1 — will be addressed in a dedicated sub-task.
+- ~~`main.py`: `GET /test-email` is publicly reachable~~ — RESOLVED in M4-ST1 Part 1. Endpoint deleted.
 - `routers/webhooks.py`: Inbound attachment bytes are not persisted to disk/object storage. Lost on failure or restart. Severity: Medium. Mitigation: email can be re-sent.
 
 **Test infrastructure:**
 - Codex sandbox has no PostgreSQL. DB-backed tests are run by Lorenzo locally.
 - Python 3.12 for production (Dockerfile), 3.14.3 for local dev/test.
 - Python 3.14 dependency warnings from OpenAI/Pydantic V1 and Starlette async — non-blocking, tracked.
+- Local Python/Alembic commands from `backend/` require `PYTHONPATH=.` for module resolution: `PYTHONPATH=. python -m pytest tests/ -v`, `PYTHONPATH=. alembic upgrade head`. Without it, Python cannot find the `app` module. Discovered during M4-ST1 verification.
+- Test DB (occ_test) requires Alembic migrations applied separately. `create_all` from test fixtures creates tables but does NOT alter existing columns, and if tests have already populated a fresh test DB before Alembic versioning exists, `alembic upgrade head` can fail with duplicate-table errors. Safe path: recreate the test DB (or stamp it appropriately if preserving an existing schema), then run `DATABASE_URL=<TEST_DB_URL> PYTHONPATH=. alembic upgrade head` before the full DB-backed suite. Discovered during M4-ST1 verification when the nullable `company_name` migration had not been applied to occ_test.
+- bcrypt pinned to 4.1.3 in requirements.txt. passlib 1.7.4 is incompatible with bcrypt 5.x on Python 3.14 (runtime crash during auth init). Discovered during Codex verification.
 
 ## Current Milestone Exit Gate
 
@@ -132,7 +143,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 > - [ ] Dashboard shows current overdue picture at a glance
 > - [ ] Action queue displays prioritized work items
 > - [ ] Invoice and customer detail views are functional
-> - [ ] Auth (email+password, bcrypt, JWT) protects all routes
+> - [x] Auth (email+password, bcrypt, JWT) protects all routes
 > - [ ] Import flow accessible from the UI (upload, preview, confirm)
 
 ## Milestone History
@@ -207,6 +218,22 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Opportunities gained 3 new structured entries (import quality intelligence, document rescue flow, future anomaly families)
 - Low-confidence document handling discussed and intentionally deferred (belongs to ingestion hardening, contingent on input-boundary expansion beyond CSV/XLSX)
 
+### M4 — Core UI (sessions starting 2026-03-23)
+
+**ST1 Part 1 (backend auth + template service + API hardening):**
+- Auth: register (email+password only), login, me, update account (onboarding). Email normalized. JWT via python-jose + bcrypt via passlib.
+- Account isolation: `get_current_user` dependency validates `current_user.account_id` on all account-scoped routes. Basic tenant isolation in M4; broader hardening remains M8.
+- Template persistence: `POST /imports/{id}/save-template` — idempotent per import. Explicit endpoint call (not automatic); frontend calls it when user confirms mapping. Preserves mapping work even if import is later cancelled.
+- Template auto-apply: exact normalized header-set match + delimiter/decimal compatibility + exactly-one-candidate rule. Intentionally strict.
+- All endpoints auth-protected except `/health`, `/`, `/auth/*`, `/webhooks/*`.
+- `/test-email` deleted. Account defaults: EUR, Europe/Paris. company_name nullable (set during onboarding).
+- Alembic migration `a1b2c3d4e5f6`: company_name nullable, existing accounts updated to EUR/Europe/Paris.
+- `import_commit.py`: `create_pending_import()` accepts `template_mapping` param, passes through to `ingest_file` as `existing_template`.
+- Verification fix: `tests/test_import_commit.py` fake_ingest_file mock signature updated to accept `existing_template` kwarg (stale mock from pre-ST1 signature).
+- ST1 preview contract: parse/mapping preview only (IngestionResult + duplicate warning + fuzzy matches). Business diff preview (new/updated/disappeared/anomalies) deferred to M4-ST2.
+- Validation: full backend 370/370 locally. Zero regressions. Two commits: main ST1 slice + mock signature fix.
+- 370 tests at ST1 Part 1 close
+
 ## Decisions Made
 
 | # | Decision | Rationale | Date |
@@ -246,17 +273,22 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 33 | All anomalies are differential | Every anomaly type flags a transition detected during this specific import, not a standing condition. This prevents noise accumulation in the action queue and keeps anomalies actionable. | 2026-03-22 |
 | 34 | Trust-calibrated automation doctrine | Constitution §5.9 strengthened from "AI is subordinate" to trust-calibrated automation: maximum trustworthy automation, deterministic where sufficient, AI where it compresses ambiguity, expose uncertainty, smallest pre-digested fallback. Repo-wide AI-role drift corrected: wedge (8 locations), architecture stack table, product-definition heading. Diff engine, anomaly flagging, and fuzzy matching are deterministic — not AI. | 2026-03-22 |
 | 35 | Review gate vs audit gate in workflow | Normal reviews validate changed files and related files. Audit gates scan repo-wide for contradictions in shared terminology, AI/automation role claims, stale references, and invariant statements. Audit is mandatory at milestone close-outs, docs-consolidation passes, and post-completion doctrine writebacks. Discovered during M3 close-out when normal reviews missed 10+ stale contradictions in files outside edited sections. | 2026-03-22 |
+| 36 | Registration is email+password only; company_name collected during onboarding | Lowest friction signup. company_name nullable on Account, set via PATCH /auth/account. European defaults (EUR, Europe/Paris) applied at account creation. | 2026-03-23 |
+| 37 | Email normalized on register and login | `.strip().lower()` before lookup/storage. Prevents duplicate-case accounts and login confusion. | 2026-03-23 |
+| 38 | Account isolation via auth-derived context in M4 | `current_user.account_id` validated on all account-scoped routes. Frontend uses GET /auth/me to derive account_id — never user-supplied in URLs. Basic tenant isolation in M4; broader auth hardening (verification, rate limiting, deeper trust) remains M8. | 2026-03-23 |
+| 39 | Template saved via explicit endpoint, idempotent per import | `POST /imports/{id}/save-template` persists the mapping. Frontend calls it when user confirms mapping (before import confirm). If import already has template_id, repeated calls update rather than duplicate. Preserves mapping work even if import is later cancelled. | 2026-03-23 |
+| 40 | Template auto-apply: exact header-set match, one-candidate rule | Normalized set of mapped source columns must exactly equal normalized file headers. Compatible delimiter/decimal_separator when both non-null. Exactly one template must match. Intentionally strict — loosened later with evidence if needed. | 2026-03-23 |
+| 41 | bcrypt pinned to 4.1.3 for passlib compatibility | passlib 1.7.4 crashes against bcrypt 5.x on Python 3.14. Pin discovered during Codex verification. | 2026-03-23 |
+| 42 | ST1 preview contract is parse/mapping only | create_pending_import() returns IngestionResult preview, duplicate warning, fuzzy matches. Does NOT return business diff (new/updated/disappeared/anomalies). Business diff preview endpoint deferred to M4-ST2. Frontend must present ST1 preview as mapping review, not business-change preview. | 2026-03-23 |
 
 ## Queued Items
 
 | Item | Target Milestone | Notes |
 |------|-----------------|-------|
-| Change Account defaults: currency CZK → EUR, timezone Europe/Prague → Europe/Paris | M4 (Core UI) | Onboarding should detect locale and suggest defaults |
 | Update `company_id` comment from "IČO in Czech" to generic "company registration number" | Next schema pass | Cosmetic but signals correct mental model |
 | Add Italian to required reminder template languages | M5 (Action Execution) | FR/IT are primary markets; Italian must be first-class |
 | Rotate Railway PostgreSQL password | ASAP | Public URL with credentials used in terminal session during migration |
 | File storage: replace local disk with object storage + encryption | Post-M3 | ST1 uses plain `UPLOAD_DIR` on local disk. Railway filesystem is ephemeral. Acceptable for dev, not production. |
-| ImportTemplate persistence: save confirmed mappings for reuse | M4 | Currently mapping round-trips through client. Saving as template is a separate feature. |
 | Optimize DB test runtime (~15min is slow) | Post-M3 | Per-test NullPool engine is correctness-first. Revisit faster isolation (e.g. pytest-asyncio loop scope config) when milestone pressure is lower. |
 | Recompute Customer.last_invoice_date alongside aggregate recalculation | Post-M3 | ST2 recalculates total_outstanding and invoice_count but not last_invoice_date. After disappearance or reassignment, last_invoice_date on the old customer could reference an invoice no longer active there. Low severity for v1. |
 | Tighten ambiguous-duplicate handling from warn-and-skip to fail-fast | Post data-repair tooling | Decision #21. Revisit when users have manual invoice merge/delete tooling. |
@@ -268,6 +300,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Import quality intelligence (CSV/XLSX paths) | M4–M7 | Detect shaky imports: abnormal skip rates, duplicate rates, low-confidence mapping. Surface exact problematic rows. See opportunities.md. |
 | Low-confidence extraction / document rescue flow | Post-v1 (v1.2+) | Contingent on expanding v1 input boundary beyond CSV/XLSX. See opportunities.md. |
 | Future anomaly families | M4–M7 | Import-quality, data-integrity, identity, history/oscillation anomalies. See opportunities.md. |
+| Run Alembic migration on Railway production DB | ASAP | `a1b2c3d4e5f6` (nullable company_name, EUR/Paris defaults). Railway auto-deploys code but does NOT auto-run migrations. |
+| Business diff preview endpoint | M4-ST2 | Dry-run diff engine returning new/updated/disappeared/anomaly counts without committing. Required before real import preview screen. |
+| Webhook signature verification | M4 (dedicated sub-task) | RESEND_WEBHOOK_SECRET exists but is not used. HIGH severity. Explicitly deferred from ST1. |
 
 ## Infrastructure
 
