@@ -245,6 +245,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 32 | Multiple anomalies per invoice allowed | Balance increase + due date change are independent signals. Each gets its own Activity record. A single invoice can produce 1–3 anomalies in one confirm pass. | 2026-03-22 |
 | 33 | All anomalies are differential | Every anomaly type flags a transition detected during this specific import, not a standing condition. This prevents noise accumulation in the action queue and keeps anomalies actionable. | 2026-03-22 |
 | 34 | Trust-calibrated automation doctrine | Constitution §5.9 strengthened from "AI is subordinate" to trust-calibrated automation: maximum trustworthy automation, deterministic where sufficient, AI where it compresses ambiguity, expose uncertainty, smallest pre-digested fallback. Repo-wide AI-role drift corrected: wedge (8 locations), architecture stack table, product-definition heading. Diff engine, anomaly flagging, and fuzzy matching are deterministic — not AI. | 2026-03-22 |
+| 35 | Review gate vs audit gate in workflow | Normal reviews validate changed files and related files. Audit gates scan repo-wide for contradictions in shared terminology, AI/automation role claims, stale references, and invariant statements. Audit is mandatory at milestone close-outs, docs-consolidation passes, and post-completion doctrine writebacks. Discovered during M3 close-out when normal reviews missed 10+ stale contradictions in files outside edited sections. | 2026-03-22 |
 
 ## Queued Items
 

@@ -141,3 +141,29 @@ Before ending a session or moving to the next step:
    - Technical design principle change → architecture.md
    - Wedge scope or commercial positioning change → wedge-v1.md
    - Update the narrowest owner only — do not duplicate the same truth across docs
+
+## Review gate vs audit gate
+
+Two different verification levels exist. They are not interchangeable.
+
+**Review gate (every sub-task and prompt):**
+- Validate the implementation, prompt, or changed files
+- Check directly related files for consistency
+- Verify test results and invariant checklists
+- This is the standard GPT review loop
+
+**Audit gate (milestone close-outs and doctrine changes):**
+- Full repo-wide scan for contradictions across all docs
+- Check shared terminology, AI/automation role claims, stale milestone references, threshold values, and invariant statements against current implementation truth
+- Every doc that references the changed concept must be checked, not just the edited files
+- Discovered drift is patched in the same close-out pass
+
+**When the audit gate is mandatory:**
+- At every milestone close-out
+- After any docs-consolidation pass
+- After post-completion insight writeback that changes foundational doctrine (constitution, architecture, wedge)
+
+**When the audit gate is optional:**
+- Sub-task close-outs where only implementation files changed and no shared doctrine was modified
+
+**Why this exists:** During M3 close-out, the normal review gate approved a docs consolidation prompt that left 10+ stale contradictions in files outside the edited sections. A full-repo audit caught them. The review gate validates what changed; the audit gate validates what should have changed but didn't.

@@ -75,3 +75,4 @@ When something changes, update the narrowest owner first:
 - Update BUILD_LOG if current state or decisions changed — it always reflects live truth
 - Only promote to trajectory when a roadmap commitment exists
 - Avoid duplicating the same truth across multiple docs — pick one owner
+- Milestone close-outs and post-completion doctrine writebacks require a repo-wide audit gate, not only a review of changed files (see ai-engineering-workflow.md)
