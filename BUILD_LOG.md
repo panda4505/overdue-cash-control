@@ -15,12 +15,12 @@
 ## Current State
 
 - **Milestone:** 3 of 10 — IN PROGRESS
-- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 COMPLETE, M3-ST3 next
-- **Status:** M3-ST2 (diff engine) is done. 239 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 19 normalization + 41 import commit + 10 imports router). Second import to the same account correctly identifies new, updated, unchanged, and disappeared invoices. Disappearance gated on scope_type=full_snapshot. Reappearing invoices restored to open. Duplicate safety. Customer aggregates recalculated from DB including reassignment. scope_type plumbed through ConfirmImportRequest with Literal validation.
-- **Latest validation:** TestDiffEngine 16/16, imports router 10/10, full backend 239/239. No regressions.
+- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 COMPLETE, M3-ST3 COMPLETE, M3-ST4 next
+- **Status:** M3-ST3 (fuzzy customer matching) is done. 295 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 57 import commit + 12 imports router + 33 customer matching). Same-entity resolution with 6-step deterministic-first chain: exact name → merge_history alias → VAT ID → Jaro-Winkler (≥0.98) → user merge_decision → create new. Diacritic folding for comparison only. Trust-first: qualifier-based near-collisions require user confirmation. merge_history compounds value over time.
+- **Latest validation:** Full backend 295/295. No regressions.
 - **Blockers:** None
 - **Last session:** 2026-03-22
-- **Next:** M3-ST3 — Fuzzy customer matching
+- **Next:** M3-ST4 — Anomaly detection
 
 ## Implementation Map
 
@@ -44,17 +44,19 @@
 
 **Ingestion pipeline** (`services/ingestion.py`): Canonical parse → map → preview pipeline. SHA-256 file hash. JSON-serializable sample rows. Used by both upload and email paths.
 
-**Normalization** (`services/normalization.py`): `normalize_invoice_number()` strips separators, lowercases. `normalize_customer_name()` strips EU legal suffixes (CZ/SK/DE/FR/IT/ES/EN), NFC-normalizes, lowercases.
+**Normalization** (`services/normalization.py`): `normalize_invoice_number()` strips separators, lowercases. `normalize_customer_name()` strips EU legal suffixes (CZ/SK/DE/FR/IT/ES/EN), NFC-normalizes, lowercases. Dotless legal suffixes added for Czech (`sro`), Italian (`srl`, `spa`), and Spanish (`sl`) markets.
 
 **Import commit** (`services/import_commit.py`): Two-phase import lifecycle:
 - `create_pending_import()`: parse + save file to disk + create ImportRecord(pending_preview). Gates on parse success, not mapping success. Duplicate hash warning.
-- `confirm_import()`: Diff-aware reconciliation engine. Loads existing invoices by normalized_invoice_number. Classifies each file row as new/updated/unchanged. Disappeared invoices (absent from file) flagged as possibly_paid — **only when scope_type=full_snapshot**. Reappearing possibly_paid invoices always restored to open (even if data identical). Raw invoice_number immutable after first seen. Incoming-file duplicate and ambiguous existing-DB duplicate detection (warn-and-skip). Customer aggregates recalculated from DB post-loop (including reassigned invoice old customers). change_set tracks created/updated/disappeared for rollback. Per-invoice Activity for updated and disappeared.
+- `confirm_import()`: Diff-aware reconciliation engine. Loads existing invoices by normalized_invoice_number. Classifies each file row as new/updated/unchanged. Disappeared invoices (absent from file) flagged as possibly_paid — **only when scope_type=full_snapshot**. Reappearing possibly_paid invoices always restored to open (even if data identical). Raw invoice_number immutable after first seen. Incoming-file duplicate and ambiguous existing-DB duplicate detection (warn-and-skip). Customer aggregates recalculated from DB post-loop (including reassigned invoice old customers). change_set tracks created/updated/disappeared for rollback. Per-invoice Activity for updated and disappeared. Customer resolution upgraded from exact-only to a deterministic-first chain: cache pre-check, then exact normalized name, merge_history alias reuse, VAT ID match, Jaro-Winkler ≥0.98 auto-merge with diacritic folding, user merge_decision for 0.70–0.98 range, else create new. merge_history reuse is deterministic (no duplicate events). In-memory matcher structures synced during row loop for same-import dedup and VAT backfill visibility. Fuzzy match preview in create_pending_import (best-effort).
+
+**Customer matching** (`services/customer_matching.py`): Pure logic module, no DB dependency. `find_best_match()` shared by preview and confirm paths. `fold_diacritics()` for comparison-time accent stripping. `HIGH_THRESHOLD=0.98` (trust-first: only obvious typos auto-merge). `LOW_THRESHOLD=0.70` (below this, no match). Dataclasses: FileCustomer, ExistingCustomerInfo, MatchResult, FuzzyMatchResult.
 
 **LLM client** (`services/llm_client.py`): OpenAI primary (gpt-4o-mini), DeepSeek fallback. Single async function. Provider-agnostic interface.
 
 **Routers:**
 - `routers/upload.py`: `POST /upload` — stateless preview (no DB write)
-- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type.
+- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Validated strictly — unknown customer IDs raise 400.
 - `routers/webhooks.py`: Resend inbound email webhook. Downloads attachments, feeds into ingestion pipeline.
 
 ### Database
@@ -63,16 +65,17 @@ PostgreSQL 16 on Railway (managed). 2 Alembic migrations applied:
 - `4a129036b96f`: initial 7 tables
 - `7d3f8c2b1a90`: replace number_format with decimal_separator + thousands_separator on import_templates
 
-### Test suite (239 tests)
+### Test suite (295 tests)
 
 - `test_file_parser.py` — 86 tests: 5 CSV + 1 XLSX fixture, encoding fallback, edge cases
 - `test_column_mapper.py` — 48 tests: 6-language dictionary, template, LLM fallback, conflicts
 - `test_ingestion.py` — 15 tests: all fixtures, hash, serialization, XLSX
 - `test_upload.py` — 10 tests: CSV + XLSX upload, validation, response shape
 - `test_webhooks.py` — 10 tests: parity tests, webhook endpoint coverage
-- `test_normalization.py` — 19 tests: invoice number + customer name normalization
-- `test_import_commit.py` — 41 tests: pending import, confirm lifecycle, mapping validation, TestDiffEngine (16 diff scenarios)
-- `test_imports_router.py` — 10 tests: upload/confirm endpoints, scope_type validation
+- `test_normalization.py` — 24 tests: invoice number + customer name normalization, dotless suffixes
+- `test_import_commit.py` — 57 tests: pending import, confirm lifecycle, mapping validation, TestDiffEngine (16 diff scenarios), TestFuzzyMerge (17 fuzzy matching scenarios)
+- `test_imports_router.py` — 12 tests: upload/confirm endpoints, scope_type validation, merge_decisions contract
+- `test_customer_matching.py` — 33 tests: fold_diacritics, merge_history, VAT, Jaro-Winkler, qualifier near-collision guards, typo positive regression, normalization integration
 - DB tests require `TEST_DATABASE_URL` (must differ from `DATABASE_URL`). Per-test NullPool engine + TRUNCATE cleanup.
 
 ### Sample data (`sample-data/`)
@@ -122,7 +125,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 >
 > **Milestone 3 is done when:**
 > - [x] A second import to the same account correctly identifies new, updated, unchanged, and disappeared invoices
-> - [ ] Fuzzy customer matching merges obvious name variants and asks for confirmation on ambiguous ones
+> - [x] Fuzzy customer matching merges obvious name variants and asks for confirmation on ambiguous ones
 > - [ ] Anomalies are flagged (balance increase, due date change, reappeared invoice, cluster risk)
 > - [x] No data lost or duplicated across sequential imports
 >
@@ -174,7 +177,14 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Validation: TestDiffEngine 16/16, imports router 10/10, full backend 239/239. Environment setup issues resolved before final run.
 - 239 tests at ST2 close
 
-**ST3 (fuzzy customer matching): NOT STARTED**
+**ST3 (fuzzy customer matching):**
+- Same-entity resolution implemented with a 6-step deterministic-first chain: exact normalized name, merge_history alias reuse, VAT ID, Jaro-Winkler ≥0.98 on diacritic-folded names, user merge_decision, else create new customer
+- `services/customer_matching.py` added as a pure logic module shared by preview and confirm paths
+- Dotless suffix normalization added for `sro`, `srl`, `spa`, and `sl`
+- Trust-first thresholding locked with qualifier near-collision negative tests and typo positive regression tests
+- `create_pending_import()` now returns best-effort fuzzy match preview; `ConfirmImportRequest` accepts optional `merge_decisions`
+- Validation: full backend 295/295 with no regressions
+- 295 tests at ST3 close
 
 ## Decisions Made
 
@@ -205,6 +215,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 23 | Same-entity resolution and relationship intelligence are architecturally separate | ST3 implements same-entity matching only: name variant dedup (Jaro-Winkler on diacritic-folded names), VAT ID dedup, confirmed alias memory (merge_history). Relationship intelligence (parent-subsidiary, group membership, commercial grouping) is a future capability requiring a separate model and UX, not an extension of merge_history. These must never be conflated. | 2026-03-22 |
 | 24 | Diacritic folding is comparison-time only | fold_diacritics() strips accents for Jaro-Winkler comparison. Stored normalized_name and merge_history.normalized_name preserve accents. This ensures "Société Générale" and "Societe Generale" score 1.0 on JW without changing stored data. | 2026-03-22 |
 | 25 | merge_history reuse is deterministic reuse, not a new merge | When a known alias is found in merge_history, it increments customers_reused only. No duplicate merge_history entry, no new customer_merged Activity, no change_set entry. Only first-time alias discovery (VAT, JW, user_confirmed) creates merge events. | 2026-03-22 |
+| 26 | Auto-merge restricted to typo-like near-identity only (HIGH_THRESHOLD=0.98) | Qualifier-based near-collisions (country, branch, division, letter variants scoring 0.92–0.97) must not auto-merge. Deterministic paths (exact, VAT, merge_history) handle common cases at score 1.0. JW auto-merge at 0.98 catches only obvious single-char typos on longer names. Conservative first confirmation is acceptable because merge_history compounds value over time. Do not lower threshold without regression tests for both typo positives and near-collision negatives. | 2026-03-22 |
 
 ## Queued Items
 
@@ -222,6 +233,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Python 3.14 dependency warnings (OpenAI/Pydantic V1 internals, Starlette async) | Maintenance | Non-blocking. Observed during ST2 local validation. |
 | Customer relationship/group intelligence | Post-M3 (likely M6+) | Separate from identity resolution. Likely requires CustomerGroup model with explicit membership, suggested-link workflow, and distinct UI. Not an extension of merge_history or fuzzy matching. See decision #23. |
 | Multi-candidate fuzzy matching for user confirmation | Post-M3 | Current ST3 returns single best candidate per file customer. Future: return top N for richer confirmation UX. |
+| docs/opportunities.md maintenance | Ongoing | Strategic/commercial opportunities discovered during build. Update when major product insights emerge. See docs/opportunities.md. |
 
 ## Infrastructure
 
