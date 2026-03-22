@@ -18,11 +18,11 @@
 
 ## Current State
 
-- **Milestone:** 2 of 10 — COMPLETE
-- **Sub-task:** N/A — Milestone 2 closed
-- **Status:** All M2 repo-level exit gates passed. 169 tests green. Ingestion pipeline (parse → map → preview) works for CSV and XLSX across 6 fixtures in 5 languages (CZ/EN/FR/IT/DE). Email and upload paths both route through the same canonical `ingest_file()`. Encoding fallback chain proven for Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2. Real customer export validation remains deferred to pilot (M9).
+- **Milestone:** 3 of 10 — IN PROGRESS
+- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 next
+- **Status:** M3-ST1 (first import commit path) is done. 221 tests green. Users can upload a file to an account-scoped endpoint, receive a preview (even with imperfect mapping), then confirm to commit Customers, Invoices, ImportRecord, and Activity to PostgreSQL. Normalization (EU legal suffix stripping), mapping validation, duplicate hash detection, change_set for rollback, and audit fields all implemented. Existing stateless `POST /upload` preview is untouched.
 - **Blockers:** None
-- **Last session:** 2026-03-21
+- **Last session:** 2026-03-22
 
 ---
 
@@ -30,13 +30,15 @@
 
 ```
 backend/
-  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook + upload router registration
-  app/config.py         — env var loading for DB, LLM, Resend, auth, frontend
+  app/main.py           — FastAPI app, /, /health, /test-email, CORS, webhook + upload + imports router registration. CHANGED in session 10: added imports_router and confirm_router.
+  app/config.py         — env var loading for DB, LLM, Resend, auth, frontend, UPLOAD_DIR, TEST_DATABASE_URL. CHANGED in session 10: added UPLOAD_DIR and TEST_DATABASE_URL settings.
   app/database.py       — async SQLAlchemy engine + session
   app/services/llm_client.py — OpenAI primary, DeepSeek fallback
   app/services/file_parser.py — CSV/XLSX parser with encoding detection, delimiter detection, header row detection, format-shaped numeric/date type inference. 4 number patterns, European-first encoding fallback with mojibake rejection guard, pure-integer ID protection. CHANGED in session 9: added suspicious-character guard in _detect_encoding() to reject mojibaked single-byte decodes.
   app/services/column_mapper.py — Column mapper with 6-language deterministic dictionary (FR/IT/EN/CZ/DE/ES), template validation with normalized comparison + always-enrich, async LLM fallback with hallucination protection. 14 canonical fields (12 core, 2 auxiliary). 48 tests.
   app/services/ingestion.py — Shared canonical ingestion pipeline: parse → map → package preview. SHA-256 file hash. JSON-serializable sample rows with original headers. to_dict() for shared serialization. CHANGED in session 9: added to_dict() method.
+  app/services/normalization.py — Invoice number and customer name normalization for matching. EU legal suffix stripping (CZ/DE/FR/IT/ES/EN). normalize_invoice_number() strips separators, lowercases. normalize_customer_name() strips legal suffixes (s.r.o., GmbH, SAS, S.r.l., etc.), NFC-normalizes, lowercases. NEW in session 10.
+  app/services/import_commit.py — Import commit service: create_pending_import() (parse + save file + ImportRecord), confirm_import() (re-parse + validate mapping + create Customers/Invoices + Activity + change_set). Gates pending import on parse success not mapping success. Row validation before customer creation (no orphan customers). Repo-aligned change_set keys. Audit fields (errors, warnings_text). NEW in session 10.
   app/models/__init__.py  — imports all 7 models for Alembic
   app/models/account.py   — Account (company using the product)
   app/models/user.py      — User (person logging in, separate for future multi-user)
@@ -46,6 +48,7 @@ backend/
   app/models/import_template.py — ImportTemplate (saved column mappings, format hints: decimal_separator + thousands_separator, usage counter). CHANGED in session 6: replaced number_format with explicit separator fields, updated comments to multilingual examples.
   app/models/activity.py  — Activity (timeline of all events, flexible JSONB details, 4 indexes)
   app/routers/upload.py     — POST /upload endpoint: thin wrapper over ingestion service, uses result.to_dict(). CHANGED in session 9: replaced _serialize_ingestion_result with result.to_dict().
+  app/routers/imports.py   — Import lifecycle endpoints: POST /accounts/{account_id}/imports/upload (account-scoped pending import + preview), POST /imports/{import_id}/confirm (commit to DB). Explicit account 404, file validation, ValueError→HTTP status mapping. NEW in session 10.
   app/routers/webhooks.py — Resend inbound webhook: downloads attachments, filters by supported extension, calls ingest_file() for each, returns ingestion results. Skips unsupported files and missing download URLs with reason. CHANGED in session 9: wired to ingestion pipeline, added skip handling.
   app/routers/__init__.py — routers package marker
   app/utils/__init__.py — utils package placeholder
@@ -57,14 +60,18 @@ backend/
   alembic/script.py.mako — Alembic revision template
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
+  tests/conftest.py        — Shared DB test fixtures: per-test engine with NullPool (avoids asyncpg cross-event-loop errors), truncate-based cleanup, test_account factory, UPLOAD_DIR override, HTTPX test_client with get_db override. Requires TEST_DATABASE_URL (RuntimeError if missing). NEW in session 10.
   tests/test_file_parser.py   — 86 tests: 5 CSV fixtures + 1 XLSX fixture + inline edge cases + 4 encoding fallback tests (Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2). CHANGED in session 9: added TestGermanXLSX (8 tests) and TestEncodingFallback (4 tests).
   tests/test_column_mapper.py — 48 tests (unchanged).
   tests/test_ingestion.py   — Service-level ingestion tests: all 6 fixtures, hash, serialization, template pass-through, error handling, XLSX ingestion. CHANGED in session 9: added XLSX test, renamed smoke test to cover 6 fixtures.
   tests/test_upload.py      — HTTP endpoint tests: upload success (CSV + XLSX), file validation, response shape, hash verification. CHANGED in session 9: added XLSX upload test.
   tests/test_webhooks.py    — 10 tests: 3 parity tests (upload vs email produce identical results across all 5 CSV fixtures), 7 webhook endpoint tests (success, skip PDF, no attachments, non-email event, download failure, missing download URL, mixed multi-attachment). NEW in session 9.
+  tests/test_normalization.py — 19 tests (6 invoice number + 13 customer name): parametrized normalization tests for EU legal suffixes (CZ/DE/FR/IT/ES/EN), compound suffixes, unicode, whitespace, empty strings. NEW in session 10.
+  tests/test_import_commit.py — 25 tests: 5 pending import tests (success, imperfect mapping, duplicate hash, file saved, parse failure), 15 confirm tests (invoices, customers, dedup, status, audit fields, activity, timestamps, days_overdue, change_set structure, double-confirm, nonexistent, customer reuse, normalized numbers, orphan guard, all-fixtures smoke), 5 mapping validation tests (invalid source, missing required, amount fallback, no amount, duplicate source). DB-backed via conftest.py. NEW in session 10.
+  tests/test_imports_router.py — 8 tests: upload preview+import_id, confirm summary, unsupported type 400, empty file 400, nonexistent account 404, nonexistent import 404, already confirmed 409, invalid mapping 400. DB-backed via conftest.py. NEW in session 10.
   Dockerfile            — Python 3.12-slim backend image for Railway (production). Local dev/test runs Python 3.14.3.
   railway.toml          — Railway deploy config
-  requirements.txt      — all backend deps
+  requirements.txt      — all backend deps. CHANGED in session 10: added pytest-asyncio==1.3.0.
 frontend/
   src/app/page.tsx      — landing page for Overdue Cash Control
   src/app/layout.tsx    — root layout for the Next.js app
@@ -100,6 +107,24 @@ README.md               — project overview
 ---
 
 ## Session History
+
+### Session 10 — 2026-03-22
+- **M3-ST1: First import commit path**
+  - Created `backend/app/services/normalization.py`: `normalize_invoice_number()` (strip separators, lowercase) and `normalize_customer_name()` (strip EU legal suffixes for CZ/SK/DE/FR/IT/ES/EN, NFC normalize, lowercase). 19 parametrized tests in `test_normalization.py`.
+  - Created `backend/app/services/import_commit.py`: two-phase import lifecycle:
+    - `create_pending_import()`: calls `ingest_file()`, gates on parse success (not mapping success — users can fix mapping before confirming), checks duplicate SHA-256 hash, saves file to disk (`UPLOAD_DIR/{account_id}/{import_id}/filename`), creates `ImportRecord(status=pending_preview)`, explicit `await db.commit()` with file cleanup on failure.
+    - `confirm_import()`: validates confirmed mapping (source columns exist, required targets present, no duplicate source assignments), re-parses stored file, validates ALL row-level fields before customer creation (no orphan customers), creates Customer (exact normalized name match within account, with contact enrichment on reuse), creates Invoice (with `days_overdue`, `first_overdue_at`, `normalized_invoice_number`), builds `change_set` with repo-aligned keys (`created`, `updated`, `disappeared`, `customers_created`, `customers_merged`), populates `ImportRecord.errors` and `warnings_text`, creates `Activity(action_type=import_committed)`, updates `Account.first_import_at`/`last_import_at`.
+  - Created `backend/app/routers/imports.py`: `POST /accounts/{account_id}/imports/upload` (account-scoped, explicit 404 on missing account) and `POST /imports/{import_id}/confirm` (ValueError→404/409/400 mapping).
+  - Modified `backend/app/main.py`: registered `imports_router` and `confirm_router`.
+  - Modified `backend/app/config.py`: added `UPLOAD_DIR` and `TEST_DATABASE_URL` settings.
+  - Modified `backend/requirements.txt`: added `pytest-asyncio==1.3.0`.
+  - Created `backend/tests/conftest.py`: DB test fixtures with per-test engine using `NullPool` (no connection pooling) to avoid asyncpg cross-event-loop errors. Truncate-based cleanup (`TRUNCATE ... RESTART IDENTITY CASCADE`) after each test. `test_account` factory, `_override_upload_dir` autouse fixture, `test_client` with `get_db` override. Requires `TEST_DATABASE_URL` — `RuntimeError` if missing or matches `DATABASE_URL`.
+  - Created `backend/tests/test_import_commit.py`: 25 service-level DB tests covering pending import creation, imperfect mapping acceptance, duplicate warning, file persistence, confirm lifecycle (invoices, customers, dedup, audit fields, activity, timestamps, days_overdue, change_set structure, double-confirm rejection, orphan customer guard), mapping validation, and all-fixtures smoke test.
+  - Created `backend/tests/test_imports_router.py`: 8 endpoint tests covering upload preview, confirm summary, error codes (400/404/409).
+  - Existing `POST /upload` endpoint and all 188 existing tests untouched — zero regressions.
+  - **Test fixture debugging**: Initial conftest used session-scoped `db_engine` with savepoint-based isolation (`begin_nested()`, `join_transaction_mode="create_savepoint"`, `after_transaction_end` event listener). This failed on Python 3.14 + asyncpg + pytest-asyncio because the session-scoped engine created connections on one event loop while function-scoped tests ran on another (`RuntimeError: Task ... got Future ... attached to a different loop`). All "cannot perform operation: another operation is in progress" errors were downstream symptoms. Root cause fix: eliminated session-scoped engine, switched to per-test `create_async_engine(NullPool)` + truncate cleanup. 4 prompt iterations to diagnose and fix.
+  - 221 tests passing (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 19 normalization + 25 import commit + 8 imports router)
+- **Next:** M3-ST2 (diff engine — second import to the same account identifies new, updated, unchanged, and disappeared invoices)
 
 ### Session 9 — 2026-03-21
 - **M2-ST4: Email webhook wiring + parity tests**
@@ -228,6 +253,9 @@ README.md               — project overview
 | 13 | European-first compatibility is a project invariant | France and Italy are primary launch markets. Czech is supported but not the default reference case. Parser uses format-shaped detection (separator patterns, not country buckets). All fixtures, header dictionaries, and legal suffix handling must cover FR/IT as first-class. | 2026-03-21 |
 | 14 | Python 3.12 for production (Dockerfile), 3.14.3 for local dev | Railway Dockerfile pins a Python 3.12 slim image for deployment stability. Local dev/test environment runs 3.14.3. Both are compatible — SQLAlchemy 2.0.48 upgrade (decision #10) resolved the only known incompatibility. No action needed unless a 3.14-only feature is used in code. | 2026-03-21 |
 | 15 | Mojibake rejection guard in encoding detection | When trying single-byte encodings, reject any decode that produces C1 control characters (127–159) or known mojibake markers (¤©¹»¾). This forces the fallback chain to keep trying until clean text is found. Discovered when encoding proof tests showed Windows-1250 Czech decoded as ISO-8859-1 produced Č→È corruption. +9 lines in file_parser.py. | 2026-03-21 |
+| 16 | Pending import gates on parse success, not mapping success | `IngestionResult.success` reflects mapping completeness, which is too strict for import creation. Users need to receive a preview even with imperfect mapping, fix it manually, then confirm. Pending imports are created whenever `file_hash` exists and `total_rows > 0`. Only true parse failures return `import_id=None`. | 2026-03-22 |
+| 17 | Per-test NullPool engine for DB tests (no session-scoped engine) | Python 3.14 + asyncpg + pytest-asyncio creates each test function on its own event loop. A session-scoped engine's pooled connections are bound to the session loop and fail when used on a function loop (`RuntimeError: Future attached to a different loop`). Fix: each test creates its own engine with `NullPool`, runs `create_all` idempotently, truncates after. Trade-off: ~15min full suite vs seconds with savepoints, but correct on this stack. | 2026-03-22 |
+| 18 | Mapping round-trips through client, not stored on ImportRecord | Preview returns the mapping; client sends it back on confirm. Server validates against actual file headers. Avoids premature schema changes. ImportTemplate persistence (saving confirmed mappings for reuse) is deferred to a later sub-task. | 2026-03-22 |
 
 ---
 
@@ -275,6 +303,8 @@ README.md               — project overview
 > - [ ] Fuzzy customer matching merges obvious name variants and asks for confirmation on ambiguous ones
 > - [ ] Anomalies are flagged (balance increase, due date change, reappeared invoice, cluster risk)
 > - [ ] No data lost or duplicated across sequential imports
+>
+> **M3-ST1 (first import commit path): COMPLETE** — 221 tests green on 2026-03-22. Pending import + confirm + Customer/Invoice creation + normalization + mapping validation + change_set + activity logging + duplicate detection + audit fields + no orphan customers.
 
 ---
 
@@ -286,6 +316,9 @@ README.md               — project overview
 | Update `company_id` comment from "IČO in Czech" to generic "company registration number" | Next schema pass | Cosmetic but signals correct mental model |
 | Add Italian to required reminder template languages | M5 (Action Execution) | FR/IT are primary markets; Italian must be first-class |
 | Rotate Railway PostgreSQL password | ASAP | Public URL with credentials used in terminal session during migration |
+| File storage: replace local disk with object storage + encryption | Post-M3 | ST1 uses plain `UPLOAD_DIR` on local disk. Railway filesystem is ephemeral. Acceptable for dev, not production. |
+| ImportTemplate persistence: save confirmed mappings for reuse | M3 or M4 | Currently mapping round-trips through client. Saving as template is a separate feature. |
+| Optimize DB test runtime (~15min is slow) | Post-M3 | Per-test NullPool engine is correctness-first. Revisit faster isolation (e.g. pytest-asyncio loop scope config) when milestone pressure is lower. |
 
 ---
 
