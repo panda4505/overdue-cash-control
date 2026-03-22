@@ -45,10 +45,13 @@ async def create_pending_import(
     file_bytes: bytes,
     filename: str,
     method: str = "upload",
+    template_mapping: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Parse a file, save it to disk, and create a pending ImportRecord."""
 
-    result = await ingest_file(file_bytes, filename, method=method)
+    result = await ingest_file(
+        file_bytes, filename, method=method, existing_template=template_mapping
+    )
     parse_succeeded = bool(result.file_hash) and result.total_rows > 0
 
     if not parse_succeeded:

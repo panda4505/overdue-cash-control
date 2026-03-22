@@ -14,6 +14,8 @@ from app.config import get_settings
 from app.database import Base
 from app.models import *  # noqa: F401,F403
 from app.models.account import Account
+from app.models.user import User
+from app.services.auth import create_access_token, hash_password
 
 
 def _get_test_db_url() -> str:
@@ -94,6 +96,29 @@ async def test_account(db_session: AsyncSession) -> Account:
     db_session.add(account)
     await db_session.commit()
     return account
+
+
+@pytest_asyncio.fixture
+async def test_user(db_session: AsyncSession, test_account: Account) -> User:
+    """Create a test user linked to the test account."""
+
+    user = User(
+        id=uuid.uuid4(),
+        account_id=test_account.id,
+        email="testuser@example.com",
+        hashed_password=hash_password("testpassword123"),
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+@pytest.fixture
+def auth_headers(test_user: User) -> dict[str, str]:
+    """Return Authorization headers with a valid JWT for test_user."""
+
+    token = create_access_token({"sub": str(test_user.id)})
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(autouse=True)

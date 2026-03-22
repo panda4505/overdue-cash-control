@@ -1,10 +1,10 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-import httpx
 
 from app.config import get_settings
 from app.database import engine
+from app.routers.auth import router as auth_router
 from app.routers.imports import router as imports_router, confirm_router
 from app.routers.upload import router as upload_router
 from app.routers.webhooks import router as webhooks_router
@@ -14,7 +14,7 @@ settings = get_settings()
 app = FastAPI(
     title="Overdue Cash Control",
     description="Collections workflow for EU SMBs",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -25,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(webhooks_router)
 app.include_router(upload_router)
 app.include_router(imports_router)
@@ -44,30 +45,10 @@ async def health_check():
     return {
         "status": "ok" if db_status == "connected" else "degraded",
         "db": db_status,
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
 
 
 @app.get("/")
 async def root():
     return {"message": "Overdue Cash Control API", "docs": "/docs"}
-
-
-@app.get("/test-email")
-async def test_email():
-    """Send a test email via Resend. Remove this endpoint after testing."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": "Overdue Cash Control <noreply@overduecash.com>",
-                "to": "lorenzo.massimo.pandolfo@gmail.com",
-                "subject": "Test — Overdue Cash Control is alive",
-                "html": "<h1>It works!</h1><p>Outbound email from overduecash.com is working.</p>",
-            },
-        )
-    return {"status": response.status_code, "body": response.json()}

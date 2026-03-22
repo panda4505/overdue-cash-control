@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app.dependencies import get_current_user
+from app.models.user import User
 from app.services.ingestion import ingest_file
 
 router = APIRouter()
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     """Accept a CSV/XLSX file upload and return parsed + mapped preview data."""
 
     if not file.filename:

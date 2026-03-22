@@ -1,10 +1,13 @@
 import hashlib
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.dependencies import get_current_user
 from app.main import app
 
 SAMPLE_DIR = Path(__file__).parent.parent.parent / "sample-data"
@@ -12,6 +15,24 @@ SAMPLE_DIR = Path(__file__).parent.parent.parent / "sample-data"
 
 def _read_fixture(filename: str) -> bytes:
     return (SAMPLE_DIR / filename).read_bytes()
+
+
+_fake_user = SimpleNamespace(
+    id=uuid.uuid4(),
+    account_id=uuid.uuid4(),
+    email="test@example.com",
+    full_name=None,
+    is_active=True,
+)
+
+
+@pytest.fixture(autouse=True)
+def _override_auth():
+    """Override auth dependency for all tests in this file."""
+
+    app.dependency_overrides[get_current_user] = lambda: _fake_user
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 class TestUploadEndpoint:
@@ -127,7 +148,6 @@ class TestUploadEndpoint:
     @pytest.mark.asyncio
     async def test_upload_response_is_json_serializable(self):
         """The full response should be valid JSON (no date objects, no DataFrames)."""
-
         file_bytes = _read_fixture("messy_generic_export.csv")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

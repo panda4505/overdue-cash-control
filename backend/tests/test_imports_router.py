@@ -31,9 +31,12 @@ def _content_type(filename: str) -> str:
 
 class TestImportsRouter:
     @pytest.mark.asyncio
-    async def test_upload_returns_preview_and_import_id(self, test_client, test_account):
+    async def test_upload_returns_preview_and_import_id(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
 
@@ -45,14 +48,18 @@ class TestImportsRouter:
         assert data["duplicate_warning"] is None
 
     @pytest.mark.asyncio
-    async def test_confirm_returns_summary(self, test_client, test_account):
+    async def test_confirm_returns_summary(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         upload_response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("italian_ar_export.csv", _read_fixture("italian_ar_export.csv"), "text/csv")},
         )
         upload_data = upload_response.json()
         confirm_response = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": _mapping_from_preview(upload_data["preview"])},
         )
 
@@ -63,9 +70,12 @@ class TestImportsRouter:
         assert "change_set" not in data
 
     @pytest.mark.asyncio
-    async def test_upload_unsupported_file_type(self, test_client, test_account):
+    async def test_upload_unsupported_file_type(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("report.pdf", b"fake", "application/pdf")},
         )
 
@@ -73,9 +83,12 @@ class TestImportsRouter:
         assert "Unsupported" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_upload_empty_file(self, test_client, test_account):
+    async def test_upload_empty_file(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("empty.csv", b"", "text/csv")},
         )
 
@@ -83,19 +96,25 @@ class TestImportsRouter:
         assert "empty" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_upload_nonexistent_account(self, test_client):
+    async def test_upload_nonexistent_account(
+        self, test_client, test_user, auth_headers
+    ):
+        """Uploading to a non-existent account that is NOT the user's account returns 403 (isolation)."""
         response = await test_client.post(
             f"/accounts/{uuid.uuid4()}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
 
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
+        assert response.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_confirm_nonexistent_import(self, test_client):
+    async def test_confirm_nonexistent_import(
+        self, test_client, test_user, auth_headers
+    ):
         response = await test_client.post(
             f"/imports/{uuid.uuid4()}/confirm",
+            headers=auth_headers,
             json={"mapping": {"invoice_number": "Invoice Number"}},
         )
 
@@ -103,9 +122,12 @@ class TestImportsRouter:
         assert "not found" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_confirm_already_confirmed(self, test_client, test_account):
+    async def test_confirm_already_confirmed(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         upload_response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
         upload_data = upload_response.json()
@@ -113,10 +135,12 @@ class TestImportsRouter:
 
         first_confirm = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping},
         )
         second_confirm = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping},
         )
 
@@ -124,9 +148,12 @@ class TestImportsRouter:
         assert second_confirm.status_code == 409
 
     @pytest.mark.asyncio
-    async def test_confirm_invalid_mapping_rejected(self, test_client, test_account):
+    async def test_confirm_invalid_mapping_rejected(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         upload_response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
         upload_data = upload_response.json()
@@ -135,6 +162,7 @@ class TestImportsRouter:
 
         response = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping},
         )
 
@@ -142,9 +170,12 @@ class TestImportsRouter:
         assert "not in file" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_confirm_with_scope_type_full_snapshot(self, test_client, test_account):
+    async def test_confirm_with_scope_type_full_snapshot(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         upload_response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
         upload_data = upload_response.json()
@@ -152,6 +183,7 @@ class TestImportsRouter:
 
         response = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping, "scope_type": "full_snapshot"},
         )
 
@@ -159,9 +191,12 @@ class TestImportsRouter:
         assert response.json()["scope_type"] == "full_snapshot"
 
     @pytest.mark.asyncio
-    async def test_confirm_with_invalid_scope_type_rejected(self, test_client, test_account):
+    async def test_confirm_with_invalid_scope_type_rejected(
+        self, test_client, test_account, test_user, auth_headers
+    ):
         upload_response = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
         )
         upload_data = upload_response.json()
@@ -169,13 +204,16 @@ class TestImportsRouter:
 
         response = await test_client.post(
             f"/imports/{upload_data['import_id']}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping, "scope_type": "invalid_value"},
         )
 
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_confirm_accepts_merge_decisions(self, test_client, db_session, test_account):
+    async def test_confirm_accepts_merge_decisions(
+        self, test_client, db_session, test_account, test_user, auth_headers
+    ):
         today = date.today()
         due_str = (today - timedelta(days=10)).isoformat()
         csv_content = (
@@ -185,6 +223,7 @@ class TestImportsRouter:
 
         upload_resp = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("test.csv", csv_content, "text/csv")},
         )
 
@@ -197,6 +236,7 @@ class TestImportsRouter:
 
         confirm_resp = await test_client.post(
             f"/imports/{import_id}/confirm",
+            headers=auth_headers,
             json={"mapping": mapping, "scope_type": "unknown", "merge_decisions": {}},
         )
 
@@ -209,6 +249,8 @@ class TestImportsRouter:
         test_client,
         db_session,
         test_account,
+        test_user,
+        auth_headers,
     ):
         today = date.today()
         due_str = (today - timedelta(days=10)).isoformat()
@@ -219,6 +261,7 @@ class TestImportsRouter:
 
         upload_resp = await test_client.post(
             f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
             files={"file": ("test.csv", csv_content, "text/csv")},
         )
 
@@ -232,6 +275,7 @@ class TestImportsRouter:
         fake_id = str(uuid.uuid4())
         confirm_resp = await test_client.post(
             f"/imports/{import_id}/confirm",
+            headers=auth_headers,
             json={
                 "mapping": mapping,
                 "scope_type": "unknown",
