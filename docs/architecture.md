@@ -155,7 +155,7 @@ Email with CSV/XLSX attachment
 - No sensitive data in logs
 - Webhook signature verification (Resend signing secret — open bug, to be fixed in M2)
 - Single-user accounts in v1 (no multi-user, no roles)
-- Auth hardening deferred to M10
+- Simple auth in M4 (email+password, bcrypt, JWT). Auth hardening (verification, rate limiting, data isolation) in M8 (Security & Trust).
 
 ---
 

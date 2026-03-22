@@ -141,9 +141,12 @@ AI-powered ingestion tasks
 
 -   **Fuzzy customer matching across imports.** SMB exports are messy.
     The same customer may appear as "ACME s.r.o.", "Acme SRO", or "ACME
-    Czech" across different exports. The engine uses fuzzy matching to
-    consolidate these into a single debtor profile, with the user able
-    to confirm or override.
+    S.R.O." across different exports. The engine uses deterministic-first
+    matching (exact name, VAT ID, confirmed aliases) with conservative
+    fuzzy matching for obvious typo-like variants. Ambiguous matches
+    (including country, branch, or division qualifiers) require user
+    confirmation. Same-entity resolution only — relationship/group
+    intelligence is a separate future capability.
 
 -   **Intelligent diff on refresh.** When a new export arrives, the
     engine compares it to the previous state and infers: which invoices

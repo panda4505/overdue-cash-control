@@ -23,108 +23,13 @@ March 2026 --- Aligned with actual build as of Milestone 2 start
 
 **Contents**
 
-1\. The working model: building with AI engineering partners
+1\. The working model
 
-1.1 How this works
+This project is built by Lorenzo (founder) with AI engineering partners: Claude (architecture, prompts, reviews), GPT (senior reviewer), Codex (code writing in VS Code), all coordinated through a structured review loop.
 
-You are the founder, product owner, tester, and decision-maker. You work
-with two AI engineering partners:
+The full collaboration process — roles, review loop, framing rules, feedback format, startup and close-out checklists — is documented in `docs/ai-engineering-workflow.md`. That document is the authority on how sessions work.
 
--   **Codex (OpenAI) in VS Code.** Your primary code writer. Runs in
-    agent mode with GPT-5.4. Reads your codebase directly, writes and
-    edits files, runs terminal commands, commits and pushes to GitHub.
-    Use for: writing features, fixing bugs, editing code, updating the
-    build log, running git.
-
--   **Claude (Anthropic) in chat.** Your architect and senior engineer.
-    Use for: architecture decisions, data model design, reviewing plans,
-    generating complex multi-file changes, strategic thinking, writing
-    Codex prompts.
-
-The build happens through iterative sessions where you describe what
-needs to be built, AI partners write the code, you test it, and you
-iterate until each milestone's exit gate is passed.
-
-1.2 Advantages
-
--   **Zero hiring risk.** No recruiting, no contracts, no freelancer
-    management, no availability gaps. You start building immediately.
-
--   **Speed of iteration.** Codex produces working code in minutes. Claude
-    designs architecture in real-time. The bottleneck is your testing
-    and decision-making, not engineering output.
-
--   **Consistent quality.** Both AI partners follow the product definition
-    and constitution faithfully every session when given the build log
-    as context.
-
--   **Cost efficiency.** No engineering salary or contractor invoices.
-    Your cost is your AI subscriptions and hosting infrastructure.
-
--   **Full-stack capability.** Backend, frontend, database schemas,
-    email templates, AI integration, deployment scripts --- all covered
-    between the two partners.
-
-1.3 Constraints to respect
-
--   **Session continuity via build log.** Neither AI partner retains state
-    between conversations. The `BUILD_LOG.md` file in the repo root is
-    the continuity mechanism. Paste it at the start of every Claude
-    session. Codex can read it directly from the repo. The build log
-    contains: current milestone, what exists, session history, open bugs,
-    decisions, and accounts/URLs.
-
--   **You are the runtime.** AI writes the code. You run it, deploy it,
-    test it, and report back. Codex can run terminal commands in VS Code
-    but you approve and verify.
-
--   **You own deployment and infrastructure.** AI writes deployment
-    scripts, Dockerfiles, and configuration files. You create hosting
-    accounts, set up domains, configure providers, and manage
-    infrastructure.
-
--   **Testing is your responsibility.** AI can write automated tests, but
-    manual testing --- uploading real files, checking emails, clicking
-    through the UI --- is on you.
-
--   **Modular code.** Keep components independent so individual files can
-    be shared and worked on per session.
-
-1.4 The session workflow
-
-Every working session follows this pattern:
-
-1.  **Context load.** For Claude: paste BUILD_LOG.md. For Codex: tell it
-    to read BUILD_LOG.md. State the milestone and what needs to happen.
-
-2.  **Build.** Codex writes code in VS Code (agent mode). Claude designs
-    architecture and generates Codex prompts for complex changes. You
-    review, ask questions, request changes.
-
-3.  **Test.** You run the code locally or check deployed results. Report
-    what happened.
-
-4.  **Iterate.** Fix issues, refine, improve. Repeat steps 2--3 until
-    done.
-
-5.  **Log.** Ask Codex: "Update BUILD_LOG.md with what we did this
-    session." Codex reads the git diff, observes changes, and updates
-    the log. Then commits and pushes.
-
-1.5 The build log
-
-`BUILD_LOG.md` lives in the repo root. It is the single most important
-operational tool in the build process. It contains: identity, current
-state, file inventory, session history, decisions made, open bugs,
-accounts/URLs, current milestone exit gate, reference docs, and
-instructions for AI on how to read and update it.
-
-> *Without this log, every session starts from scratch. With it, every
-> session starts exactly where you left off. Treat it as sacred.*
-
-Every Codex prompt that modifies files ends with
-`git add . && git commit -m "..." && git push origin main`.
-Codex handles git directly --- Lorenzo does not need to do it manually.
+`BUILD_LOG.md` is the single source of truth for current project state. It is read at the start of every session.
 
 2\. The trajectory at a glance
 
@@ -205,7 +110,7 @@ recruiting pilot users. Do not underestimate that work.*
 | LLM — Primary | OpenAI API (gpt-4o-mini) | For column mapping and fuzzy matching. Deterministic matching is primary. |
 | LLM — Fallback | DeepSeek API (deepseek-chat) | OpenAI-compatible API, cost-effective fallback. |
 | Frontend | Next.js 14 + Tailwind CSS + shadcn/ui | App Router, TypeScript |
-| Auth | Deferred to M10 | Simple JWT for now |
+| Auth | Simple auth M4, hardening M8 | Email+password with bcrypt + JWT in M4. Auth hardening in M8 (Security & Trust). |
 | Domain | overduecash.com | Registered on Cloudflare |
 | Code writing | Codex in VS Code (GPT-5.4, agent mode) | Direct file editing, git push |
 | Architecture/planning | Claude (Anthropic) | Chat-based, generates Codex prompts |
@@ -966,23 +871,8 @@ competence.
 
 17\. How to start
 
-*Milestone 1 is complete. The working model for continuing is:*
+See `docs/ai-engineering-workflow.md` for the full startup checklist and collaboration process. The short version:
 
-1.  Open VS Code in the `overdue-cash-control` repo.
-
-2.  Open a new Claude chat. Paste the contents of `BUILD_LOG.md`.
-
-3.  Say: "Let's continue with Milestone [N]."
-
-4.  Claude designs the approach and generates Codex prompts.
-    Codex writes the code directly in VS Code.
-
-5.  You test and verify.
-
-6.  At session end, tell Codex: "Update BUILD_LOG.md with what we did."
-    Codex commits and pushes.
-
-7.  Repeat.
-
-**That is the entire working model.** One founder, two AI partners, one
-milestone at a time, until the product is real.
+1. Open a new Claude chat. Upload `BUILD_LOG.md` and `docs/ai-engineering-workflow.md`.
+2. State the current milestone and sub-task.
+3. Run the framing pass before any implementation.

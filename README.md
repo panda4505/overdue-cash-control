@@ -9,7 +9,7 @@ Collections workflow for EU SMBs. Import your receivables, get a daily action qu
 - **Database:** PostgreSQL 16 (Railway managed)
 - **Hosting:** Railway
 - **LLM:** OpenAI (primary) + DeepSeek (fallback)
-- **Email:** Postmark (inbound + outbound)
+- **Email:** Resend (inbound + outbound)
 
 ## Local Development
 
@@ -32,6 +32,20 @@ npm install
 cp .env.example .env.local  # Fill in API URL
 npm run dev
 ```
+
+## Documentation
+
+| Document | Role |
+|----------|------|
+| `BUILD_LOG.md` | Current project state, decisions, test evidence |
+| `docs/ai-engineering-workflow.md` | AI collaboration process and roles |
+| `docs/README.md` | Docs map, reading order, update rules |
+| `docs/opportunities.md` | Strategic discoveries not yet committed |
+| `docs/trajectory.md` | Committed roadmap and milestones |
+| `docs/product-definition.md` | Product spec (screens, data model, engines) |
+| `docs/architecture.md` | Technical stack and design decisions |
+| `docs/constitution.md` | Governing principles — highest authority |
+| `docs/wedge-v1.md` | Commercial wedge scope and boundary |
 
 ## Deployment
 

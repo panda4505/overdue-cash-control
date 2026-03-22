@@ -771,18 +771,35 @@ unchanged, or disappeared (present before, absent now).
 6.2 Fuzzy customer matching
 
 -   Normalise company names: strip legal suffixes (s.r.o., GmbH, SAS,
-    Ltd), normalise case, trim whitespace.
+    SRL, Ltd, and dotless variants), normalise case, trim whitespace.
 
--   Compare using Jaro-Winkler similarity and VAT ID matching.
+-   Resolution follows a deterministic-first chain. In priority order:
+    exact normalized name, previously confirmed alias (merge_history),
+    exact VAT/tax ID, then name similarity scoring with diacritic folding.
 
--   High confidence (\>90% or VAT match): auto-merge, log variant.
+-   High confidence exact or known-alias matches reuse the existing
+    customer without creating duplicate alias memory. High confidence
+    first-time non-exact matches (e.g., exact VAT/tax ID match or
+    obvious typo-like variant) are recorded in merge_history so future
+    imports resolve deterministically.
 
--   Medium confidence (70--90%): present for user confirmation in import
-    preview.
+-   Medium confidence (ambiguous similarity): present for user
+    confirmation in import preview. Conservative — qualifier-based
+    near-collisions (country, branch, division variants) always require
+    user review.
 
 -   Low confidence: create as new customer.
 
--   Store confirmed merge decisions for future auto-merging.
+-   Store confirmed merge decisions in merge_history for future
+    auto-merging. Each confirmation makes the system permanently smarter
+    for that account.
+
+-   Same-entity resolution only. Relationship intelligence
+    (parent/subsidiary, group membership) is architecturally separate
+    and deferred. See BUILD_LOG decisions #23, #26.
+
+Exact thresholds and implementation details are tracked in BUILD_LOG
+decisions and in the code (`services/customer_matching.py`).
 
 6.3 Anomaly detection
 
