@@ -91,7 +91,7 @@ class TestCreatePendingImport:
 
     @pytest.mark.asyncio
     async def test_pending_import_created_even_with_imperfect_mapping(self, db_session, test_account):
-        async def fake_ingest_file(file_bytes: bytes, filename: str, method: str = "upload"):
+        async def fake_ingest_file(file_bytes: bytes, filename: str, method: str = "upload", existing_template=None):
             result = await base_ingest_file(
                 file_bytes,
                 filename,
