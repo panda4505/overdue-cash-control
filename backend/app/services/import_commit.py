@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -25,6 +25,12 @@ from app.services.customer_matching import (
     find_best_match,
     find_fuzzy_matches,
     fuzzy_match_result_to_dict,
+)
+from app.services.anomaly_detection import (
+    Anomaly,
+    anomaly_to_dict,
+    detect_customer_anomalies,
+    detect_invoice_anomalies,
 )
 from app.services.file_parser import parse_file
 from app.services.ingestion import ingest_file
@@ -250,10 +256,28 @@ async def confirm_import(
         "disappeared": [],
         "customers_created": [],
         "customers_merged": [],
+        "anomalies": [],
     }
+
+    all_anomalies: list[Anomaly] = []
+    newly_created_customer_ids: set[uuid.UUID] = set()
 
     today = date.today()
     customer_cache: dict[str, Customer] = {}
+
+    # Pre-import overdue snapshot for customer-level anomaly detection
+    pre_import_overdue_counts: dict[uuid.UUID, int] = {}
+    for cust in existing_customers_list:
+        count = 0
+        for inv in existing_invoices_list:
+            if (
+                inv.customer_id == cust.id
+                and inv.status == "open"
+                and inv.due_date is not None
+                and inv.due_date < today
+            ):
+                count += 1
+        pre_import_overdue_counts[cust.id] = count
 
     for row_index, row in enumerate(canonical_rows, start=1):
         raw_customer_name = row.get("customer_name")
@@ -364,6 +388,7 @@ async def confirm_import(
             db.add(customer)
             await db.flush()
             customers_created += 1
+            newly_created_customer_ids.add(customer.id)
             change_set["customers_created"].append(
                 {
                     "customer_id": str(customer.id),
@@ -508,6 +533,19 @@ async def confirm_import(
                     "before": "possibly_paid",
                     "after": "open",
                 }
+
+            # --- ANOMALY DETECTION (invoice-level) ---
+            invoice_anomalies = detect_invoice_anomalies(
+                invoice_id=str(existing_invoice.id),
+                customer_id=str(customer.id),
+                invoice_number=existing_invoice.invoice_number,
+                existing_status=existing_invoice.status,
+                existing_outstanding=float(existing_invoice.outstanding_amount),
+                new_outstanding=float(outstanding_amount),
+                existing_due_date=existing_invoice.due_date,
+                new_due_date=due_date,
+            )
+            all_anomalies.extend(invoice_anomalies)
 
             if changes:
                 # --- UPDATED ---
@@ -709,6 +747,57 @@ async def confirm_import(
             cust.total_outstanding = sum(float(i.outstanding_amount) for i in customer_invoices)
             cust.invoice_count = len(customer_invoices)
 
+    # --- CUSTOMER-LEVEL ANOMALY DETECTION ---
+    for cid in affected_customer_ids:
+        # Count post-import overdue invoices (status='open' and past due)
+        post_overdue_query = select(func.count()).select_from(Invoice).where(
+            Invoice.account_id == import_record.account_id,
+            Invoice.customer_id == cid,
+            Invoice.deleted_at.is_(None),
+            Invoice.status == "open",
+            Invoice.due_date < today,
+        )
+        post_overdue_result = await db.execute(post_overdue_query)
+        post_overdue_count = post_overdue_result.scalar() or 0
+
+        pre_overdue_count = pre_import_overdue_counts.get(cid, 0)
+
+        # Look up customer name for anomaly details
+        cust_name = None
+        for cached_cust in customer_cache.values():
+            if cached_cust.id == cid:
+                cust_name = cached_cust.name
+                break
+        if cust_name is None:
+            cust_obj = await db.get(Customer, cid)
+            cust_name = cust_obj.name if cust_obj else "Unknown"
+
+        customer_anomalies = detect_customer_anomalies(
+            customer_id=str(cid),
+            customer_name=cust_name,
+            pre_overdue_count=pre_overdue_count,
+            post_overdue_count=post_overdue_count,
+            is_new_customer=cid in newly_created_customer_ids,
+        )
+        all_anomalies.extend(customer_anomalies)
+
+    # --- ANOMALY ACTIVITY RECORDS ---
+    for anomaly in all_anomalies:
+        anomaly_activity = Activity(
+            account_id=import_record.account_id,
+            import_id=import_record.id,
+            invoice_id=uuid.UUID(anomaly.invoice_id) if anomaly.invoice_id else None,
+            customer_id=uuid.UUID(anomaly.customer_id) if anomaly.customer_id else None,
+            action_type="anomaly_flagged",
+            details={
+                "anomaly_type": anomaly.anomaly_type,
+                **anomaly.details,
+            },
+            performed_by="system",
+        )
+        db.add(anomaly_activity)
+        change_set["anomalies"].append(anomaly_to_dict(anomaly))
+
     import_record.status = "confirmed"
     import_record.invoices_created = invoices_created
     import_record.invoices_updated = invoices_updated
@@ -736,6 +825,7 @@ async def confirm_import(
             "customers_reused": customers_reused,
             "customers_merged": customers_merged,
             "errors": errors,
+            "anomalies_flagged": len(all_anomalies),
         },
         performed_by="system",
     )
@@ -761,6 +851,8 @@ async def confirm_import(
         "customers_merged": customers_merged,
         "errors": errors,
         "warnings": warnings,
+        "anomalies_flagged": len(all_anomalies),
+        "anomalies": [anomaly_to_dict(a) for a in all_anomalies],
     }
 
 

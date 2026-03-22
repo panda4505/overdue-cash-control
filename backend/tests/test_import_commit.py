@@ -313,6 +313,7 @@ class TestConfirmImport:
             "disappeared",
             "customers_created",
             "customers_merged",
+            "anomalies",
         }
         assert len(record.change_set["created"]) == summary["invoices_created"]
         assert record.change_set["updated"] == []
@@ -1385,6 +1386,7 @@ class TestDiffEngine:
             "disappeared",
             "customers_created",
             "customers_merged",
+            "anomalies",
         }
         assert set(record.change_set["updated"][0].keys()) == {"invoice_id", "before", "after"}
         assert record.change_set["updated"][0]["before"]["outstanding_amount"] == 100.0
@@ -1568,3 +1570,388 @@ class TestDiffEngine:
         assert beta is not None
         assert float(acme.total_outstanding) == 200.0
         assert float(beta.total_outstanding) == 100.0
+
+
+class TestAnomalyDetection:
+    """Integration tests for anomaly detection in confirm_import."""
+
+    @pytest.mark.asyncio
+    async def test_balance_increase_flagged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "150.00", "150.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-bal-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-bal-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["anomalies_flagged"] >= 1
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "balance_increase" in anomaly_types
+
+        # Check Activity record created
+        activities = (
+            await db_session.execute(
+                select(Activity).where(
+                    Activity.import_id == id2,
+                    Activity.action_type == "anomaly_flagged",
+                )
+            )
+        ).scalars().all()
+        balance_activities = [
+            a for a in activities if a.details.get("anomaly_type") == "balance_increase"
+        ]
+        assert len(balance_activities) >= 1
+        assert balance_activities[0].details["previous_amount"] == 100.0
+        assert balance_activities[0].details["new_amount"] == 150.0
+
+    @pytest.mark.asyncio
+    async def test_balance_decrease_not_flagged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "50.00", "50.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-nodec-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-nodec-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        anomaly_types = {a["anomaly_type"] for a in summary.get("anomalies", [])}
+        assert "balance_increase" not in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_due_date_change_flagged(self, db_session, test_account):
+        today = date.today()
+        old_due = (today - timedelta(days=10)).isoformat()
+        new_due = (today + timedelta(days=30)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", old_due, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", new_due, "100.00", "100.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-due-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-due-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["anomalies_flagged"] >= 1
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "due_date_change" in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_due_date_unchanged_not_flagged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-nodue-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-nodue-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        anomaly_types = {a["anomaly_type"] for a in summary.get("anomalies", [])}
+        assert "due_date_change" not in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_reappearance_flagged(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv_all = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv_missing = _build_two_invoice_csv(
+            [["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]]
+        )
+
+        # Import 1: both invoices
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_all, filename="anomaly-reappear-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        # Import 2: INV-002 disappears (full_snapshot)
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_missing, filename="anomaly-reappear-2.csv"
+        )
+        await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        # Import 3: INV-002 reappears
+        id3, map3, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_all, filename="anomaly-reappear-3.csv"
+        )
+        summary = await confirm_import(db_session, id3, map3)
+
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "reappearance" in anomaly_types
+
+        # Verify the Activity record
+        reappear_activities = (
+            await db_session.execute(
+                select(Activity).where(
+                    Activity.import_id == id3,
+                    Activity.action_type == "anomaly_flagged",
+                )
+            )
+        ).scalars().all()
+        reappear = [a for a in reappear_activities if a.details.get("anomaly_type") == "reappearance"]
+        assert len(reappear) >= 1
+
+    @pytest.mark.asyncio
+    async def test_multiple_anomalies_on_same_invoice(self, db_session, test_account):
+        """Balance increase + due date change in the same import."""
+        today = date.today()
+        old_due = (today - timedelta(days=10)).isoformat()
+        new_due = (today + timedelta(days=20)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", old_due, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", new_due, "200.00", "200.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-multi-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-multi-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "balance_increase" in anomaly_types
+        assert "due_date_change" in anomaly_types
+        assert summary["anomalies_flagged"] >= 2
+
+    @pytest.mark.asyncio
+    async def test_cluster_risk_flagged(self, db_session, test_account):
+        """First import with 3 overdue invoices crosses threshold (0 -> 3)."""
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+                ["INV-003", "Acme Ltd.", due_str, "300.00", "300.00"],
+            ]
+        )
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="anomaly-cluster.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "cluster_risk" in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_cluster_risk_not_flagged_below_threshold(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="anomaly-nocluster.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        anomaly_types = {a["anomaly_type"] for a in summary.get("anomalies", [])}
+        assert "cluster_risk" not in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_cluster_risk_not_refired_when_already_above(self, db_session, test_account):
+        """Customer already above threshold — second import should NOT re-flag cluster risk."""
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+                ["INV-003", "Acme Ltd.", due_str, "300.00", "300.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-norefire-1.csv"
+        )
+        summary1 = await confirm_import(db_session, id1, map1)
+        # First import crosses threshold — cluster_risk flagged
+        assert "cluster_risk" in {a["anomaly_type"] for a in summary1["anomalies"]}
+
+        # Second import: same data, customer still above threshold
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-norefire-2.csv"
+        )
+        summary2 = await confirm_import(db_session, id2, map2)
+        # Should NOT re-fire cluster_risk (pre=3, post=3, pre >= threshold)
+        anomaly_types_2 = {a["anomaly_type"] for a in summary2.get("anomalies", [])}
+        assert "cluster_risk" not in anomaly_types_2
+
+    @pytest.mark.asyncio
+    async def test_overdue_spike_flagged(self, db_session, test_account):
+        today = date.today()
+        overdue_due = (today - timedelta(days=5)).isoformat()
+
+        # Import 1: 1 overdue invoice for Acme
+        csv1 = _build_two_invoice_csv(
+            [["INV-001", "Acme Ltd.", overdue_due, "100.00", "100.00"]]
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-spike-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        # Import 2: 4 more overdue invoices for Acme (total 5, delta 4)
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", overdue_due, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", overdue_due, "200.00", "200.00"],
+                ["INV-003", "Acme Ltd.", overdue_due, "300.00", "300.00"],
+                ["INV-004", "Acme Ltd.", overdue_due, "400.00", "400.00"],
+                ["INV-005", "Acme Ltd.", overdue_due, "500.00", "500.00"],
+            ]
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-spike-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        anomaly_types = {a["anomaly_type"] for a in summary["anomalies"]}
+        assert "overdue_spike" in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_overdue_spike_not_flagged_small_delta(self, db_session, test_account):
+        today = date.today()
+        overdue_due = (today - timedelta(days=5)).isoformat()
+
+        # Import 1: 2 overdue invoices
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", overdue_due, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", overdue_due, "200.00", "200.00"],
+            ]
+        )
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-nospike-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        # Import 2: adds 1 more (total 3, delta 1 — below threshold)
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", overdue_due, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", overdue_due, "200.00", "200.00"],
+                ["INV-003", "Acme Ltd.", overdue_due, "300.00", "300.00"],
+            ]
+        )
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-nospike-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        anomaly_types = {a["anomaly_type"] for a in summary.get("anomalies", [])}
+        assert "overdue_spike" not in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_overdue_spike_suppressed_for_new_customer(self, db_session, test_account):
+        """A brand-new customer arriving with 5 overdue invoices should NOT trigger spike."""
+        today = date.today()
+        overdue_due = (today - timedelta(days=5)).isoformat()
+        csv = _build_two_invoice_csv(
+            [
+                ["INV-001", "Brand New Corp.", overdue_due, "100.00", "100.00"],
+                ["INV-002", "Brand New Corp.", overdue_due, "200.00", "200.00"],
+                ["INV-003", "Brand New Corp.", overdue_due, "300.00", "300.00"],
+                ["INV-004", "Brand New Corp.", overdue_due, "400.00", "400.00"],
+                ["INV-005", "Brand New Corp.", overdue_due, "500.00", "500.00"],
+            ]
+        )
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="anomaly-newcust-spike.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        anomaly_types = {a["anomaly_type"] for a in summary.get("anomalies", [])}
+        assert "overdue_spike" not in anomaly_types
+        # But cluster_risk SHOULD fire (threshold crossing 0 -> 5)
+        assert "cluster_risk" in anomaly_types
+
+    @pytest.mark.asyncio
+    async def test_anomalies_in_change_set(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "200.00", "200.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="anomaly-cs-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="anomaly-cs-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        record = await db_session.get(ImportRecord, id2)
+        assert record is not None
+        assert "anomalies" in record.change_set
+        assert len(record.change_set["anomalies"]) >= 1
+        assert record.change_set["anomalies"][0]["anomaly_type"] == "balance_increase"
+
+    @pytest.mark.asyncio
+    async def test_no_anomalies_on_first_import(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="anomaly-first.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        assert summary["anomalies_flagged"] == 0
+        assert summary["anomalies"] == []
+
+    @pytest.mark.asyncio
+    async def test_anomalies_flagged_key_always_present(self, db_session, test_account):
+        """Verify the response always includes anomaly keys even when none flagged."""
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv, filename="anomaly-keys.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        assert "anomalies_flagged" in summary
+        assert "anomalies" in summary
+        assert isinstance(summary["anomalies"], list)
