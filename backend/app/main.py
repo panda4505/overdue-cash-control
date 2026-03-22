@@ -5,6 +5,7 @@ import httpx
 
 from app.config import get_settings
 from app.database import engine
+from app.routers.imports import router as imports_router, confirm_router
 from app.routers.upload import router as upload_router
 from app.routers.webhooks import router as webhooks_router
 
@@ -26,6 +27,8 @@ app.add_middleware(
 
 app.include_router(webhooks_router)
 app.include_router(upload_router)
+app.include_router(imports_router)
+app.include_router(confirm_router)
 
 
 @app.get("/health")

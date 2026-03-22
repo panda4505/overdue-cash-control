@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
 
+    # File storage
+    UPLOAD_DIR: str = "uploads"
+
+    # Test database — required for running DB tests. Must differ from DATABASE_URL.
+    TEST_DATABASE_URL: str = ""
+
     model_config = {
         "env_file": ".env",
         "extra": "ignore",
