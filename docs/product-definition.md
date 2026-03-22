@@ -663,7 +663,7 @@ validation and constitutional assumption testing.
 
 4\. Ingestion engine
 
-The AI-powered backend that makes data input effortless. Five
+The automation backend that makes data input effortless. Five
 responsibilities, feeding a single pipeline regardless of input method.
 
 > *File arrives by upload or email → parse → map → preview → user

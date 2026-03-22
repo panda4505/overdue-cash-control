@@ -99,3 +99,38 @@ These are captured here so they are not forgotten, but they are not in scope for
 - External registry validation (candidate M7+ if prioritized)
 - Matching confidence explanation UI (candidate M5 if prioritized)
 - Customer merge undo / unmerge tooling (post-M3)
+
+## Import quality intelligence (CSV/XLSX paths)
+
+> **Status:** Not committed. Fits current v1 input boundary (CSV/XLSX only).
+> **Candidate timing:** M4–M7 if prioritized.
+
+- **What:** Detect shaky imports even on structured CSV/XLSX paths. Flag abnormal skipped-row rates, duplicate rates, parse-fallback rates, low-confidence column mapping, and suspiciously uniform or empty columns.
+- **Why:** Users import messy real-world files. The product should surface import-quality problems at preview time, not silently pass them through. This is ingestion/preview hardening — not reconciliation.
+- **How:** Import quality metrics computed during `create_pending_import()` and surfaced in the preview response. Exact problematic rows/fields identified with recommended next action (re-export, fix source, review mapping).
+- **Relationship to anomaly detection:** Import quality is about the health of the incoming file itself. Anomaly detection (M3-ST4) is about transitions in business data across imports. These are separate concerns.
+
+## Low-confidence extraction / document rescue flow
+
+> **Status:** Not committed. Contingent on expanding v1 input boundary beyond CSV/XLSX.
+> **Dependency:** The current v1 boundary is CSV/XLSX structured exports only. PDF parsing is explicitly excluded. This opportunity becomes relevant only if/when the product expands to accept PDF, scanned, or OCR-processed inputs.
+> **Candidate timing:** Post-v1 (v1.2+ at earliest).
+
+- **What:** When the product accepts lower-quality inputs (PDF tables, scanned invoices, OCR output), use AI/OCR where reliable. Quarantine ambiguous rows/fields instead of silently committing them. Provide a pre-digested review/repair UX showing exact problem areas with recommended fixes.
+- **Why:** SMBs often have messy source documents. If the product expands input types, it must handle quality gracefully rather than bluffing certainty.
+- **Trust posture:** AI extracts aggressively where confidence is high. When confidence drops, the system narrows to the smallest manual review surface. Recommend better source files when appropriate. Aligns with constitution §5.9 (trust-calibrated automation).
+- **Scope note:** This is NOT current v1 scope. Do not add PDF/OCR/scan UX to product-definition.md until the input boundary is explicitly expanded.
+
+## Future anomaly families beyond M3-ST4
+
+> **Status:** Not committed. M3-ST4 implemented the five foundational anomaly types.
+> **Candidate timing:** M4–M7 depending on what pilot users surface.
+
+Possible future anomaly categories beyond the five implemented in M3-ST4 (balance increase, due date change, reappearance, overdue spike, cluster risk):
+
+- **Import-quality anomalies:** Abnormal parse failure rates, sudden column mapping changes, format shifts between imports, file-size anomalies.
+- **Data-integrity anomalies:** Invoice number format changes, currency switches, customer name instability across imports, suspicious round-number patterns.
+- **Identity anomalies:** Customers that keep generating merge candidates, high merge-history churn, potential false-positive merge patterns.
+- **History/oscillation anomalies:** Invoices repeatedly disappearing and reappearing, balances oscillating, due dates repeatedly shifting.
+
+These should be evaluated against the trust-calibrated automation doctrine: flag transitions that deserve human attention, suppress noise, and provide the narrowest possible review surface.

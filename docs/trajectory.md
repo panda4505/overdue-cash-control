@@ -107,7 +107,7 @@ recruiting pilot users. Do not underestimate that work.*
 | ORM | SQLAlchemy 2.0.48 (async) + Alembic | Upgraded from 2.0.36 for Python 3.14 compatibility |
 | Hosting | Railway | Backend, frontend, PostgreSQL. Auto-deploy from GitHub main. |
 | Email (inbound + outbound) | Resend | Domain overduecash.com verified. Inbound via tuaentoocl.resend.app. Originally planned Postmark, switched to Resend during M1. |
-| LLM — Primary | OpenAI API (gpt-4o-mini) | For column mapping and fuzzy matching. Deterministic matching is primary. |
+| LLM — Primary | OpenAI API (gpt-4o-mini) | For column mapping on unknown files / ambiguous headers. Deterministic matching is primary; LLM is fallback only. |
 | LLM — Fallback | DeepSeek API (deepseek-chat) | OpenAI-compatible API, cost-effective fallback. |
 | Frontend | Next.js 14 + Tailwind CSS + shadcn/ui | App Router, TypeScript |
 | Auth | Simple auth M4, hardening M8 | Email+password with bcrypt + JWT in M4. Auth hardening in M8 (Security & Trust). |

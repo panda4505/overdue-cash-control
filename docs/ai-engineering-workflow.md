@@ -134,3 +134,10 @@ Before ending a session or moving to the next step:
 3. Update opportunities.md if strategic insight emerged
 4. Promote to trajectory only if roadmap commitment is made
 5. Frame the next step before handing off
+6. Route post-completion insights to the correct doc owner:
+   - What happened and what was deferred → BUILD_LOG
+   - Future capabilities not yet committed → opportunities.md
+   - Enduring product principle change → constitution.md
+   - Technical design principle change → architecture.md
+   - Wedge scope or commercial positioning change → wedge-v1.md
+   - Update the narrowest owner only — do not duplicate the same truth across docs

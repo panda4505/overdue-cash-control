@@ -81,7 +81,7 @@ Setup flow:
     weekly schedule. Most tools support this natively: scheduled report
     → email recipient.
 
-3.  **Step 3.** On first received email, the AI ingestion engine
+3.  **Step 3.** On first received email, the ingestion engine
     auto-detects the file format (CSV, XLSX), identifies column
     mappings, and presents a confirmation screen: "We detected these
     columns --- does this look right?"
@@ -101,7 +101,7 @@ Path B: manual CSV/XLSX upload
 
 For users whose accounting tools cannot schedule email exports, or who
 prefer manual control, the product supports direct file upload through
-the web interface. The same AI-powered column detection and mapping
+the web interface. The same automated column detection and mapping
 engine applies. The user experience is identical after the file arrives.
 Neither path is treated as degraded or secondary.
 
@@ -114,51 +114,53 @@ which three or four tools matter most. This preserves the one-person
 manageability principle and prevents premature integration maintenance
 burden.
 
-Where AI earns its place in v1
+Where automation earns its place in v1
 
-The constitution states: "AI is subordinate, not central. Use AI where
-it compresses labor or improves workflow decisions. Do not introduce AI
-where deterministic rules are enough."
+The constitution states: "The product seeks maximum trustworthy
+automation. Deterministic where sufficient, AI where it compresses
+ambiguity, expose uncertainty rather than hide it." (See constitution
+§5.9.)
 
-In this wedge, AI is used exclusively inside the ingestion and
-reconciliation layer to compress friction that would otherwise fall on
-the user. It is never customer-facing and never marketed as "AI." The
-product is sold as faster, simpler, and lower effort.
+In this wedge, automation compresses friction inside the ingestion and
+reconciliation layer. The automation method — deterministic rules,
+heuristic scoring, or LLM — is chosen by reliability. It is never
+customer-facing and never marketed as "AI." The product is sold as
+faster, simpler, and lower effort.
 
-AI-powered ingestion tasks
+Automation in the ingestion and reconciliation layer
 
 -   **Auto-detect file format and structure.** Whether the attachment is
     CSV or XLSX, the engine identifies the tabular data and extracts it
     without the user specifying the format. (PDF table parsing deferred
-    to post-v1.)
+    to post-v1.) Deterministic detection based on file extension,
+    encoding probing, delimiter scoring, and header heuristics.
 
 -   **Auto-detect column mapping.** The engine identifies which columns
     correspond to invoice number, customer name, due date, outstanding
-    amount, currency, and contact information. It presents a
-    confidence-ranked mapping for one-click confirmation on first
-    import, and applies the saved mapping silently on subsequent
-    imports.
+    amount, currency, and contact information. Deterministic dictionary
+    matching (6 languages, ~150 aliases) is the primary path. LLM
+    fallback handles unknown headers on first-time files. Confirmed
+    mappings are saved as reusable templates.
 
--   **Fuzzy customer matching across imports.** SMB exports are messy.
-    The same customer may appear as "ACME s.r.o.", "Acme SRO", or "ACME
-    S.R.O." across different exports. The engine uses deterministic-first
-    matching (exact name, VAT ID, confirmed aliases) with conservative
-    fuzzy matching for obvious typo-like variants. Ambiguous matches
-    (including country, branch, or division qualifiers) require user
+-   **Fuzzy customer matching across imports.** The engine uses a
+    deterministic-first resolution chain: exact normalized name,
+    confirmed alias (merge_history), VAT ID, then Jaro-Winkler scoring
+    with diacritic folding. Only first-time ambiguous matches at
+    high confidence auto-merge; ambiguous matches require user
     confirmation. Same-entity resolution only — relationship/group
-    intelligence is a separate future capability.
+    intelligence is a separate future capability. No LLM involvement.
 
 -   **Intelligent diff on refresh.** When a new export arrives, the
-    engine compares it to the previous state and infers: which invoices
-    are new, which balances changed, which invoices disappeared (likely
-    paid or credited), and which customer details updated. This replaces
-    what would otherwise be a manual reconciliation task.
+    engine compares it to the previous state by normalized invoice
+    number and classifies each invoice as new, updated, unchanged, or
+    disappeared. Purely deterministic comparison logic.
 
--   **Smart exception flagging.** The engine flags anomalies that
-    deserve human attention: an invoice that reappeared after being
-    marked paid, a balance that increased instead of decreased, a
-    customer with a sudden spike in overdue invoices, or a due date that
-    appears to have been modified.
+-   **Anomaly flagging.** The engine flags anomalies that deserve human
+    attention: balance increases, due date changes, invoice
+    reappearance after disappearance, customer overdue spikes, and
+    cluster risk. All anomaly detection is deterministic rule-based
+    logic — no AI. Anomalies are differential: they flag transitions
+    detected during a specific import, not standing conditions.
 
 What AI does not do in v1
 
@@ -236,8 +238,8 @@ ingestion email address and configures their accounting tool to send the
 AR report to it. Path B: the user uploads a file manually through the
 web interface. Both paths feed the identical processing pipeline.
 
-On first file arrival (via either path), the AI engine detects the
-format and column mapping. The user confirms the mapping once and selects
+On first file arrival (via either path), the ingestion engine detects
+the format and column mapping. The user confirms the mapping once and selects
 the import scope type (full snapshot / partial / unknown). The mapping is
 saved as a reusable import template. The user then reviews the import
 preview and confirms before data touches live state. Setup is complete.
@@ -295,9 +297,9 @@ constitution:
   ------------------------- ---------------------------------------------
   **Principle**             **How this wedge complies**
 
-  One-person business first Email ingestion + AI parsing eliminates
-                            integration maintenance. No API connectors to
-                            build or babysit in v1.
+  One-person business first Email ingestion + automated parsing
+                            eliminates integration maintenance. No API
+                            connectors to build or babysit in v1.
 
   Revenue density over      Single painful workflow. No feature spread.
   breadth                   Every element serves collections.
@@ -318,8 +320,9 @@ constitution:
   Owner-closeable economics An owner can test this in 15 minutes without
                             IT involvement.
 
-  AI is subordinate         AI only compresses ingestion friction. Not
-                            marketed. Not customer-facing.
+  Trust-calibrated          Automation compresses ingestion and
+  automation                reconciliation friction. Method chosen by
+                            reliability. Not marketed as "AI."
   ------------------------- ---------------------------------------------
 
 What v1 explicitly does not do
@@ -381,18 +384,22 @@ V1 input-layer rule
 > *Two first-class input paths feed the same processing pipeline:
 > (1) automatic ingestion of emailed AR exports sent by the customer's
 > accounting tool to a dedicated Resend-managed inbox, and (2) manual
-> CSV/XLSX upload via the web interface. The AI engine handles format
-> detection, column mapping, fuzzy customer matching, and intelligent
-> diff. Both paths produce identical results. All imports go through
-> preview-before-commit. No native API connectors are built in v1.*
+> CSV/XLSX upload via the web interface. The ingestion engine handles
+> format detection and column mapping (LLM fallback for unknown
+> headers); fuzzy customer matching and intelligent diff are
+> deterministic. Both paths produce identical results. All imports go
+> through preview-before-commit. No native API connectors are built in
+> v1.*
 
-V1 AI-use rule
+V1 automation rule
 
-> *AI is used only in the ingestion and reconciliation layer to compress
-> user effort: format detection, column mapping, customer name matching,
-> change inference, and anomaly flagging. AI does not auto-send
-> communications, does not make collection decisions, and is not
-> marketed to the customer.*
+> *Automation is used in the ingestion and reconciliation layer to
+> compress user effort. LLM is used for column mapping on unknown files
+> (deterministic dictionary matching is primary). All other ingestion
+> and reconciliation tasks — format detection, customer matching, diff
+> engine, anomaly flagging — are deterministic. Automation does not
+> auto-send communications, does not make collection decisions, and is
+> not marketed as "AI."*
 
 Companion documents
 

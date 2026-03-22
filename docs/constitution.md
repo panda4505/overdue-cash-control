@@ -300,24 +300,47 @@ workflows. Tolerate messy data. Parse ugly files. Handle inconsistent
 customer names. The less polished the customer's world is, the more
 valuable the product becomes.*
 
-5.9 AI is subordinate, not central
+5.9 Trust-calibrated automation
 
-AI may be used where it increases speed, extraction quality, triage, or
-automation. But the product is not sold as "AI." The product is sold as:
-faster, simpler, lower effort, more reliable, less manual.
+The product seeks maximum trustworthy automation. AI is one tool among
+many — deterministic rules, heuristic scoring, and saved templates are
+equally valid automation paths. The goal is not "AI" or "no AI" — it is
+the fastest reliable path to a correct result with the smallest manual
+surface.
 
-**Deterministic where possible, AI where ambiguity appears.** Saved
-templates and rule-based matching are the primary path. LLM is used for
-first-time column mapping on unknown files, ambiguous header
-interpretation, and fuzzy customer name matching. The system tries
-deterministic matching first and falls back to AI only when confidence
-is low.
+**Governing rules:**
 
-*Engineer translation: Use AI where it compresses labor or improves
-workflow decisions. Do not introduce AI where deterministic rules are
-enough. Do not make the product harder to trust just to sound modern.
-The product should be cheaper, more predictable, and easier to debug
-because AI is subordinate.*
+1.  **Deterministic where sufficient.** When rules, templates, or exact
+    matching can produce a reliable result, use them. Do not add AI
+    where deterministic methods work.
+
+2.  **AI where it compresses ambiguity.** When deterministic methods
+    cannot resolve ambiguity (unknown column headers, ambiguous schema
+    interpretation on first-time files), use AI wherever it materially
+    improves extraction, triage, or decision compression and is reliable
+    enough for the task.
+
+3.  **Expose uncertainty, never hide it.** When automation confidence is
+    low — whether from deterministic scoring or AI — the product must
+    surface the uncertainty explicitly. Quarantine ambiguous results
+    rather than silently committing them.
+
+4.  **Smallest pre-digested fallback.** When full automation is not
+    trustworthy enough, the manual fallback must be the narrowest
+    possible review surface: exact rows, exact fields, exact candidates,
+    with a recommended action. The user confirms or corrects — they do
+    not investigate from scratch.
+
+5.  **Never sell "AI."** The product is sold as faster, simpler, lower
+    effort, more reliable, less manual. The automation method is an
+    implementation detail, not a marketing claim.
+
+*Engineer translation: Use the strongest trustworthy automation
+available — deterministic, heuristic, or AI. When confidence is high,
+automate fully. When confidence drops, narrow to the smallest guided
+intervention. Never bluff certainty. The product should be cheaper, more
+predictable, and easier to debug because automation is calibrated to
+trust, not to hype.*
 
 5.10 Every layer must compound revenue
 

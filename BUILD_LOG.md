@@ -14,13 +14,13 @@
 
 ## Current State
 
-- **Milestone:** 3 of 10 — IN PROGRESS
-- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 COMPLETE, M3-ST3 COMPLETE, M3-ST4 next
-- **Status:** M3-ST3 (fuzzy customer matching) is done. 295 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 57 import commit + 12 imports router + 33 customer matching). Same-entity resolution with 6-step deterministic-first chain: exact name → merge_history alias → VAT ID → Jaro-Winkler (≥0.98) → user merge_decision → create new. Diacritic folding for comparison only. Trust-first: qualifier-based near-collisions require user confirmation. merge_history compounds value over time.
-- **Latest validation:** Full backend 295/295. No regressions.
+- **Milestone:** 3 of 10 — COMPLETE
+- **Sub-task:** M3-ST1 COMPLETE, M3-ST2 COMPLETE, M3-ST3 COMPLETE, M3-ST4 COMPLETE
+- **Status:** M3 (Reconciliation & AI Layer) is done. 333 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 72 import commit + 12 imports router + 33 customer matching + 23 anomaly detection). Full reconciliation pipeline: import commit with diff engine, 6-step fuzzy customer matching, 5-type differential anomaly detection.
+- **Latest validation:** Full backend 333/333. No regressions.
 - **Blockers:** None
 - **Last session:** 2026-03-22
-- **Next:** M3-ST4 — framing pass, then anomaly detection
+- **Next:** M4 — Core UI. Framing pass required.
 
 ## Implementation Map
 
@@ -52,6 +52,8 @@
 
 **Customer matching** (`services/customer_matching.py`): Pure logic module, no DB dependency. `find_best_match()` shared by preview and confirm paths. `fold_diacritics()` for comparison-time accent stripping. `HIGH_THRESHOLD=0.98` (trust-first: only obvious typos auto-merge). `LOW_THRESHOLD=0.70` (below this, no match). Dataclasses: FileCustomer, ExistingCustomerInfo, MatchResult, FuzzyMatchResult.
 
+**Anomaly detection** (`services/anomaly_detection.py`): Pure logic module, no DB dependency. `detect_invoice_anomalies()` for per-invoice checks (balance increase, due date change, reappearance from possibly_paid). `detect_customer_anomalies()` for post-loop checks (overdue spike, cluster risk). All anomalies are differential — flag transitions, not standing conditions. Thresholds: overdue spike delta ≥ 3 AND post-count ≥ 4, cluster risk ≥ 3 open overdue (threshold-crossing only). Spike suppressed for customers created in current import.
+
 **LLM client** (`services/llm_client.py`): OpenAI primary (gpt-4o-mini), DeepSeek fallback. Single async function. Provider-agnostic interface.
 
 **Routers:**
@@ -65,7 +67,7 @@ PostgreSQL 16 on Railway (managed). 2 Alembic migrations applied:
 - `4a129036b96f`: initial 7 tables
 - `7d3f8c2b1a90`: replace number_format with decimal_separator + thousands_separator on import_templates
 
-### Test suite (295 tests)
+### Test suite (333 tests)
 
 - `test_file_parser.py` — 86 tests: 5 CSV + 1 XLSX fixture, encoding fallback, edge cases
 - `test_column_mapper.py` — 48 tests: 6-language dictionary, template, LLM fallback, conflicts
@@ -73,9 +75,10 @@ PostgreSQL 16 on Railway (managed). 2 Alembic migrations applied:
 - `test_upload.py` — 10 tests: CSV + XLSX upload, validation, response shape
 - `test_webhooks.py` — 10 tests: parity tests, webhook endpoint coverage
 - `test_normalization.py` — 24 tests: invoice number + customer name normalization, dotless suffixes
-- `test_import_commit.py` — 57 tests: pending import, confirm lifecycle, mapping validation, TestDiffEngine (16 diff scenarios), TestFuzzyMerge (17 fuzzy matching scenarios)
+- `test_import_commit.py` — 72 tests: pending import, confirm lifecycle, mapping validation, TestDiffEngine (16 diff scenarios), TestFuzzyMerge (17 fuzzy matching scenarios), TestAnomalyDetection (15 anomaly integration scenarios)
 - `test_imports_router.py` — 12 tests: upload/confirm endpoints, scope_type validation, merge_decisions contract
 - `test_customer_matching.py` — 33 tests: fold_diacritics, merge_history, VAT, Jaro-Winkler, qualifier near-collision guards, typo positive regression, normalization integration
+- `test_anomaly_detection.py` — 23 tests: pure logic module coverage for 5 anomaly types, thresholds, suppression rules, and serialization
 - DB tests require `TEST_DATABASE_URL` (must differ from `DATABASE_URL`). Per-test NullPool engine + TRUNCATE cleanup.
 
 ### Sample data (`sample-data/`)
@@ -123,14 +126,14 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 >
 > **Milestone 2: COMPLETE** — all repo-level exit gates passed on 2026-03-21. 169 tests.
 >
-> **Milestone 3 is done when:**
-> - [x] A second import to the same account correctly identifies new, updated, unchanged, and disappeared invoices
-> - [x] Fuzzy customer matching merges obvious name variants and asks for confirmation on ambiguous ones
-> - [ ] Anomalies are flagged (balance increase, due date change, reappeared invoice, cluster risk)
-> - [x] No data lost or duplicated across sequential imports
+> **Milestone 3: COMPLETE** — all 4/4 exit gates passed on 2026-03-22. 333 tests.
 >
-> **M3-ST1 (first import commit path): COMPLETE** — 221 tests on 2026-03-22.
-> **M3-ST2 (diff engine): COMPLETE** — 239 tests on 2026-03-22. TestDiffEngine 16/16, imports router 10/10, full backend 239/239. Prompt went through 3 review iterations (v1→v3) with GPT-5.4.
+> **Milestone 4 is done when:**
+> - [ ] Dashboard shows current overdue picture at a glance
+> - [ ] Action queue displays prioritized work items
+> - [ ] Invoice and customer detail views are functional
+> - [ ] Auth (email+password, bcrypt, JWT) protects all routes
+> - [ ] Import flow accessible from the UI (upload, preview, confirm)
 
 ## Milestone History
 
@@ -154,7 +157,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Cross-doc consistency pass aligned architecture/constitution/product/trajectory/wedge with the actual build and standardized the roadmap at 10 milestones
 - 169 tests at M2 close
 
-### M3 — Reconciliation & AI Layer (sessions 10–11, 2026-03-22) — IN PROGRESS
+### M3 — Reconciliation & AI Layer (sessions 10–11, 2026-03-22) — COMPLETE
 **ST1 (first import commit path):**
 - Normalization service (invoice number + customer name, EU legal suffix stripping)
 - Import commit service: create_pending_import() + confirm_import()
@@ -185,6 +188,24 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - `create_pending_import()` now returns best-effort fuzzy match preview; `ConfirmImportRequest` accepts optional `merge_decisions`
 - Validation: full backend 295/295 with no regressions
 - 295 tests at ST3 close
+
+**ST4 (anomaly detection):**
+- Pure logic module `services/anomaly_detection.py` — no DB imports, same pattern as customer_matching
+- 5 differential anomaly types: balance_increase, due_date_change, reappearance (possibly_paid only), overdue_spike, cluster_risk
+- Invoice-level anomalies detected during row loop before status mutation; customer-level anomalies detected post-loop with pre/post overdue snapshot
+- Overdue spike suppressed for customers first created in current import (no baseline to spike from)
+- Cluster risk is threshold-crossing only (pre < 3 AND post >= 3) — does not re-fire while above threshold
+- Activity records (action_type=anomaly_flagged), change_set["anomalies"], confirm response enriched
+- Validation: full backend 333/333 (295 + 23 unit + 15 integration). Zero regressions.
+- 333 tests at M3 close
+
+**M3 close-out (docs consolidation):**
+- Constitution §5.9 tightened from "AI is subordinate" to trust-calibrated automation doctrine
+- Repo-wide AI-role drift corrected: wedge (8 locations), architecture stack table, product-definition heading — diff engine, anomaly flagging, and fuzzy matching are deterministic, not AI
+- Architecture gained design principle #7 (trust-calibrated automation)
+- Workflow close-out checklist gained insight-routing guidance
+- Opportunities gained 3 new structured entries (import quality intelligence, document rescue flow, future anomaly families)
+- Low-confidence document handling discussed and intentionally deferred (belongs to ingestion hardening, contingent on input-boundary expansion beyond CSV/XLSX)
 
 ## Decisions Made
 
@@ -219,6 +240,11 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 27 | Layered memory model | Repo uses layered memory: `BUILD_LOG.md` (concise operating memory / current state / decisions / queued items), `docs/opportunities.md` (strategic/commercial discoveries not yet committed), `docs/trajectory.md` (committed roadmap only). Opportunities stay out of trajectory until they get milestone ownership. | 2026-03-22 |
 | 28 | Mandatory framing pass before each milestone and sub-task | Every new milestone and sub-task starts with a framing pass before implementation prompting. Framing must review: current BUILD_LOG state, completed-milestone learnings, relevant opportunities.md items, scope boundaries, invariants, risks, what is in scope vs deferred. No Codex prompt until framing is acceptable. | 2026-03-22 |
 | 29 | Repo-frozen AI collaboration workflow | Repo uses explicit roles: Lorenzo (orchestrator/decider), Claude (architect/prompt writer), GPT (senior reviewer/challenger), Codex (implementer). Claude initiates, GPT reviews aggressively including framing. Full process documented in `docs/ai-engineering-workflow.md`. | 2026-03-22 |
+| 30 | Overdue spike threshold: delta ≥ 3 AND post-count ≥ 4 | Absolute delta catches spikes at any baseline. Floor of 4 prevents first-import noise. Suppressed for customers first created in current import (no prior baseline). | 2026-03-22 |
+| 31 | Cluster risk threshold: ≥ 3 open overdue invoices, threshold-crossing only | Flags when pre < 3 AND post >= 3. Does NOT re-fire while above threshold. Only status='open' with due_date < today counts. New customers crossing from 0 → 3+ ARE flagged. | 2026-03-22 |
+| 32 | Multiple anomalies per invoice allowed | Balance increase + due date change are independent signals. Each gets its own Activity record. A single invoice can produce 1–3 anomalies in one confirm pass. | 2026-03-22 |
+| 33 | All anomalies are differential | Every anomaly type flags a transition detected during this specific import, not a standing condition. This prevents noise accumulation in the action queue and keeps anomalies actionable. | 2026-03-22 |
+| 34 | Trust-calibrated automation doctrine | Constitution §5.9 strengthened from "AI is subordinate" to trust-calibrated automation: maximum trustworthy automation, deterministic where sufficient, AI where it compresses ambiguity, expose uncertainty, smallest pre-digested fallback. Repo-wide AI-role drift corrected: wedge (8 locations), architecture stack table, product-definition heading. Diff engine, anomaly flagging, and fuzzy matching are deterministic — not AI. | 2026-03-22 |
 
 ## Queued Items
 
@@ -229,7 +255,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Add Italian to required reminder template languages | M5 (Action Execution) | FR/IT are primary markets; Italian must be first-class |
 | Rotate Railway PostgreSQL password | ASAP | Public URL with credentials used in terminal session during migration |
 | File storage: replace local disk with object storage + encryption | Post-M3 | ST1 uses plain `UPLOAD_DIR` on local disk. Railway filesystem is ephemeral. Acceptable for dev, not production. |
-| ImportTemplate persistence: save confirmed mappings for reuse | M3 or M4 | Currently mapping round-trips through client. Saving as template is a separate feature. |
+| ImportTemplate persistence: save confirmed mappings for reuse | M4 | Currently mapping round-trips through client. Saving as template is a separate feature. |
 | Optimize DB test runtime (~15min is slow) | Post-M3 | Per-test NullPool engine is correctness-first. Revisit faster isolation (e.g. pytest-asyncio loop scope config) when milestone pressure is lower. |
 | Recompute Customer.last_invoice_date alongside aggregate recalculation | Post-M3 | ST2 recalculates total_outstanding and invoice_count but not last_invoice_date. After disappearance or reassignment, last_invoice_date on the old customer could reference an invoice no longer active there. Low severity for v1. |
 | Tighten ambiguous-duplicate handling from warn-and-skip to fail-fast | Post data-repair tooling | Decision #21. Revisit when users have manual invoice merge/delete tooling. |
@@ -238,6 +264,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Multi-candidate fuzzy matching for user confirmation | Post-M3 | Current ST3 returns single best candidate per file customer. Future: return top N for richer confirmation UX. |
 | docs/opportunities.md maintenance | Ongoing | Strategic/commercial opportunities discovered during build. Update when major product insights emerge. See docs/opportunities.md. |
 | docs/ai-engineering-workflow.md maintenance | Ongoing | Update when workflow learnings emerge during build. |
+| Import quality intelligence (CSV/XLSX paths) | M4–M7 | Detect shaky imports: abnormal skip rates, duplicate rates, low-confidence mapping. Surface exact problematic rows. See opportunities.md. |
+| Low-confidence extraction / document rescue flow | Post-v1 (v1.2+) | Contingent on expanding v1 input boundary beyond CSV/XLSX. See opportunities.md. |
+| Future anomaly families | M4–M7 | Import-quality, data-integrity, identity, history/oscillation anomalies. See opportunities.md. |
 
 ## Infrastructure
 

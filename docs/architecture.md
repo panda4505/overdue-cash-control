@@ -15,7 +15,7 @@
 | Database | PostgreSQL 16 (Railway managed) | Relational, well-defined data model. JSONB for flexible import metadata. Managed backups, SSL, connection pooling. |
 | ORM | SQLAlchemy 2.0 (async) | Mature, well-documented. Async via asyncpg driver. Alembic for migrations. |
 | Hosting | Railway | Backend, frontend, PostgreSQL, and future worker processes in one platform. Auto-deploy from GitHub main branch. Zero DevOps. |
-| LLM — Primary | OpenAI API (gpt-4o-mini) | Column mapping on unknown files, fuzzy customer matching. Deterministic matching is primary; LLM is fallback only. |
+| LLM — Primary | OpenAI API (gpt-4o-mini) | Column mapping on unknown files / ambiguous headers. Deterministic matching is primary; LLM is fallback only. |
 | LLM — Fallback | DeepSeek API (deepseek-chat) | Cost-effective fallback. OpenAI-compatible API — same SDK, different base_url. |
 | Email — Outbound | Resend | Sends reminders from custom domain (noreply@overduecash.com). SPF/DKIM via Cloudflare auto-config. |
 | Email — Inbound | Resend | Receives AR exports via webhook. Inbound address: tuaentoocl.resend.app. Attachments downloaded via Resend Attachments API. |
@@ -167,6 +167,7 @@ Email with CSV/XLSX attachment
 4. **Pre-generated actions.** Every queue item arrives with a ready-to-execute action. The user reviews and confirms, not composes from scratch.
 5. **Smart defaults.** Zero configuration to start. Escalation rules, templates, and digests are pre-configured.
 6. **Honest ROI.** Money-recovered counter tracks "recovered after active chasing" — not causal proof.
+7. **Trust-calibrated automation.** Full automation when confidence is high. When confidence drops, quarantine ambiguous results and surface the narrowest possible review surface — exact rows, fields, or candidates with a recommended action. The automation method (deterministic rules, heuristic scoring, AI) is chosen by reliability, not by novelty. See constitution §5.9.
 
 ---
 

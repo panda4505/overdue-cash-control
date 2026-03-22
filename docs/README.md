@@ -69,6 +69,7 @@ When something changes, update the narrowest owner first:
 | Technical stack or architecture | `docs/architecture.md` |
 | Wedge scope or GTM boundary | `docs/wedge-v1.md` |
 | Repo orientation or docs map | `README.md` or `docs/README.md` |
+| Post-completion insight (deferred capability, doctrine learning, future opportunity) | Classify by type: operational → `BUILD_LOG.md`, strategic → `docs/opportunities.md`, foundational → `docs/constitution.md` or `docs/architecture.md` or `docs/wedge-v1.md`. Update narrowest owner only. |
 
 **Tie-break rules:**
 - Update BUILD_LOG if current state or decisions changed — it always reflects live truth
