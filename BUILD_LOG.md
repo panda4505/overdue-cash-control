@@ -60,7 +60,7 @@ backend/
   alembic/script.py.mako — Alembic revision template
   alembic.ini           — Alembic config
   tests/__init__.py     — tests package placeholder
-  tests/conftest.py        — Shared DB test fixtures: per-test engine with NullPool (avoids asyncpg cross-event-loop errors), truncate-based cleanup, test_account factory, UPLOAD_DIR override, HTTPX test_client with get_db override. Requires TEST_DATABASE_URL (RuntimeError if missing). NEW in session 10.
+  tests/conftest.py        — Shared DB test fixtures: per-test engine with NullPool (root cause fix: asyncpg connections bound to session-scoped event loop fail on function-scoped test loops), truncate-based cleanup (TRUNCATE ... RESTART IDENTITY CASCADE), test_account factory, UPLOAD_DIR override, HTTPX test_client with get_db override. Requires TEST_DATABASE_URL distinct from DATABASE_URL (RuntimeError if missing or matching). NEW in session 10.
   tests/test_file_parser.py   — 86 tests: 5 CSV fixtures + 1 XLSX fixture + inline edge cases + 4 encoding fallback tests (Windows-1250, ISO-8859-1, ISO-8859-15, ISO-8859-2). CHANGED in session 9: added TestGermanXLSX (8 tests) and TestEncodingFallback (4 tests).
   tests/test_column_mapper.py — 48 tests (unchanged).
   tests/test_ingestion.py   — Service-level ingestion tests: all 6 fixtures, hash, serialization, template pass-through, error handling, XLSX ingestion. CHANGED in session 9: added XLSX test, renamed smoke test to cover 6 fixtures.
@@ -124,6 +124,7 @@ README.md               — project overview
   - Existing `POST /upload` endpoint and all 188 existing tests untouched — zero regressions.
   - **Test fixture debugging**: Initial conftest used session-scoped `db_engine` with savepoint-based isolation (`begin_nested()`, `join_transaction_mode="create_savepoint"`, `after_transaction_end` event listener). This failed on Python 3.14 + asyncpg + pytest-asyncio because the session-scoped engine created connections on one event loop while function-scoped tests ran on another (`RuntimeError: Task ... got Future ... attached to a different loop`). All "cannot perform operation: another operation is in progress" errors were downstream symptoms. Root cause fix: eliminated session-scoped engine, switched to per-test `create_async_engine(NullPool)` + truncate cleanup. 4 prompt iterations to diagnose and fix.
   - 221 tests passing (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 19 normalization + 25 import commit + 8 imports router)
+  - Committed as `78e6f25`. DB tests require `TEST_DATABASE_URL` (dedicated test database, must differ from `DATABASE_URL`).
 - **Next:** M3-ST2 (diff engine — second import to the same account identifies new, updated, unchanged, and disappeared invoices)
 
 ### Session 9 — 2026-03-21
@@ -240,7 +241,7 @@ README.md               — project overview
 |---|----------|-----------|------|
 | 1 | Python/FastAPI backend | Lorenzo's comfort language | 2026-03-19 |
 | 2 | OpenAI primary, DeepSeek fallback | OpenAI for quality, DeepSeek for cost/redundancy | 2026-03-19 |
-| 3 | Postmark for inbound + outbound email | One provider, best deliverability | 2026-03-19 |
+| 3 | ~~Postmark for inbound + outbound email~~ | Superseded by decision #8 (switched to Resend in session 2) | 2026-03-19 |
 | 4 | Railway for all hosting | Zero DevOps, managed PostgreSQL | 2026-03-19 |
 | 5 | Simple auth in M4, hardening in M8 | Email+password with bcrypt + JWT in M4 (Core UI). Auth hardening (verification, rate limiting, data isolation) in M8 (Security & Trust). | 2026-03-19 |
 | 6 | Codex in VS Code for code writing | GPT-5.4, agent mode, direct file editing | 2026-03-19 |
