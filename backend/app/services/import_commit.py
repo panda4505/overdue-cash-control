@@ -100,6 +100,7 @@ async def confirm_import(
     db: AsyncSession,
     import_id: uuid.UUID,
     confirmed_mapping: dict[str, str],
+    scope_type: str = "unknown",
 ) -> dict[str, Any]:
     """Confirm a pending import and commit invoices, customers, and activity."""
 
@@ -131,8 +132,52 @@ async def confirm_import(
     if not canonical_rows:
         raise ValueError("No valid rows extracted from file")
 
+    # Load all existing non-deleted invoices for this account, indexed by normalized_invoice_number
+    existing_invoices_query = select(Invoice).where(
+        Invoice.account_id == import_record.account_id,
+        Invoice.deleted_at.is_(None),
+    )
+    existing_invoices_result = await db.execute(existing_invoices_query)
+    existing_invoices_list = existing_invoices_result.scalars().all()
+
+    # Build lookup: normalized_invoice_number -> Invoice
+    # If duplicates exist in DB, the row cannot be safely matched — skip with warning
+    existing_invoice_map: dict[str, Invoice] = {}
+    ambiguous_normalized_numbers: set[str] = set()
+    for inv in existing_invoices_list:
+        if inv.normalized_invoice_number in existing_invoice_map:
+            ambiguous_normalized_numbers.add(inv.normalized_invoice_number)
+        else:
+            existing_invoice_map[inv.normalized_invoice_number] = inv
+
+    # Remove ambiguous entries so they are skipped during matching, not silently matched
+    for norm_num in ambiguous_normalized_numbers:
+        existing_invoice_map.pop(norm_num, None)
+
+    # Pre-scan incoming file for duplicate normalized invoice numbers
+    incoming_normalized: dict[str, int] = {}
+    incoming_duplicates: set[str] = set()
+    for row_index, row in enumerate(canonical_rows, start=1):
+        raw_inv = row.get("invoice_number")
+        if raw_inv is None or str(raw_inv).strip() == "":
+            continue
+        norm = normalize_invoice_number(str(raw_inv))
+        if norm in incoming_normalized:
+            incoming_duplicates.add(norm)
+        else:
+            incoming_normalized[norm] = row_index
+
+    # Track which existing invoices appear in this import file
+    seen_invoice_numbers: set[str] = set()
+
+    # Track old customer IDs when invoices are reassigned to a different customer
+    reassigned_old_customer_ids: set[uuid.UUID] = set()
+
     warnings: list[str] = []
     invoices_created = 0
+    invoices_updated = 0
+    invoices_disappeared = 0
+    invoices_unchanged = 0
     customers_created = 0
     customers_reused = 0
     errors = 0
@@ -167,8 +212,6 @@ async def confirm_import(
             errors += 1
             continue
 
-        normalized_invoice_number = normalize_invoice_number(str(raw_invoice_number))
-
         due_date = _parse_date(row.get("due_date"))
         if due_date is None:
             warnings.append(f"Row {row_index}: invalid or missing due_date, skipped")
@@ -185,6 +228,30 @@ async def confirm_import(
             outstanding_amount = gross_amount
         if gross_amount is None:
             gross_amount = outstanding_amount
+
+        normalized_invoice_number = normalize_invoice_number(str(raw_invoice_number))
+
+        # Skip rows with ambiguous DB matches
+        if normalized_invoice_number in ambiguous_normalized_numbers:
+            warnings.append(
+                f"Row {row_index}: invoice number '{raw_invoice_number}' matches multiple "
+                f"existing invoices (ambiguous), skipped"
+            )
+            errors += 1
+            continue
+
+        # Skip duplicate invoice numbers within this file (keep first occurrence)
+        if (
+            normalized_invoice_number in incoming_duplicates
+            and normalized_invoice_number in seen_invoice_numbers
+        ):
+            warnings.append(
+                f"Row {row_index}: duplicate invoice number '{raw_invoice_number}' in file, skipped"
+            )
+            errors += 1
+            continue
+
+        seen_invoice_numbers.add(normalized_invoice_number)
 
         customer = customer_cache.get(normalized_name)
         if customer is None:
@@ -241,57 +308,264 @@ async def confirm_import(
         currency = (currency or account_currency).upper()
 
         days_overdue = max(0, (today - due_date).days)
-        first_overdue_at = due_date if days_overdue > 0 else None
 
-        invoice = Invoice(
-            account_id=import_record.account_id,
-            customer_id=customer.id,
-            invoice_number=str(raw_invoice_number).strip(),
-            normalized_invoice_number=normalized_invoice_number,
-            issue_date=issue_date,
-            due_date=due_date,
-            first_overdue_at=first_overdue_at,
-            gross_amount=gross_amount,
-            outstanding_amount=outstanding_amount,
-            currency=currency,
-            status="open",
-            days_overdue=days_overdue,
-            first_seen_import_id=import_record.id,
-            last_updated_import_id=import_record.id,
-        )
-        db.add(invoice)
-        await db.flush()
-        invoices_created += 1
-        change_set["created"].append(
-            {
-                "invoice_id": str(invoice.id),
-                "data": {
-                    "invoice_number": invoice.invoice_number,
-                    "customer_id": str(customer.id),
-                    "customer_name": customer.name,
-                    "outstanding_amount": float(invoice.outstanding_amount),
-                    "gross_amount": float(invoice.gross_amount),
-                    "due_date": invoice.due_date.isoformat(),
-                    "currency": invoice.currency,
-                    "status": invoice.status,
-                },
-            }
-        )
+        # --- DIFF: check if this invoice already exists ---
+        existing_invoice = existing_invoice_map.get(normalized_invoice_number)
 
-        customer.invoice_count = int(customer.invoice_count or 0) + 1
-        customer.total_outstanding = float(customer.total_outstanding or 0) + float(outstanding_amount)
+        if existing_invoice is not None:
+            # Compare fields to determine updated vs unchanged
+            changes: dict[str, dict[str, Any]] = {}
+
+            if float(existing_invoice.outstanding_amount) != float(outstanding_amount):
+                changes["outstanding_amount"] = {
+                    "before": float(existing_invoice.outstanding_amount),
+                    "after": float(outstanding_amount),
+                }
+            if float(existing_invoice.gross_amount) != float(gross_amount):
+                changes["gross_amount"] = {
+                    "before": float(existing_invoice.gross_amount),
+                    "after": float(gross_amount),
+                }
+            if existing_invoice.due_date != due_date:
+                changes["due_date"] = {
+                    "before": existing_invoice.due_date.isoformat(),
+                    "after": due_date.isoformat(),
+                }
+            if existing_invoice.issue_date != issue_date:
+                changes["issue_date"] = {
+                    "before": existing_invoice.issue_date.isoformat()
+                    if existing_invoice.issue_date
+                    else None,
+                    "after": issue_date.isoformat() if issue_date else None,
+                }
+            if existing_invoice.currency != currency:
+                changes["currency"] = {
+                    "before": existing_invoice.currency,
+                    "after": currency,
+                }
+            # Customer reassignment
+            if existing_invoice.customer_id != customer.id:
+                changes["customer_id"] = {
+                    "before": str(existing_invoice.customer_id),
+                    "after": str(customer.id),
+                }
+                # Track old customer so its aggregates get recalculated
+                if existing_invoice.customer_id is not None:
+                    reassigned_old_customer_ids.add(existing_invoice.customer_id)
+
+            # Reappearance: invoice was possibly_paid but is back in the file -> always an update
+            if existing_invoice.status == "possibly_paid":
+                changes["status"] = {
+                    "before": "possibly_paid",
+                    "after": "open",
+                }
+
+            if changes:
+                # --- UPDATED ---
+                before_snapshot = {
+                    "outstanding_amount": float(existing_invoice.outstanding_amount),
+                    "gross_amount": float(existing_invoice.gross_amount),
+                    "due_date": existing_invoice.due_date.isoformat(),
+                    "issue_date": existing_invoice.issue_date.isoformat()
+                    if existing_invoice.issue_date
+                    else None,
+                    "currency": existing_invoice.currency,
+                    "customer_id": str(existing_invoice.customer_id),
+                    "status": existing_invoice.status,
+                }
+
+                # Apply updates to mutable fields (raw invoice_number is immutable — not updated)
+                existing_invoice.outstanding_amount = outstanding_amount
+                existing_invoice.gross_amount = gross_amount
+                existing_invoice.due_date = due_date
+                existing_invoice.issue_date = issue_date
+                existing_invoice.currency = currency
+                existing_invoice.customer_id = customer.id
+                existing_invoice.days_overdue = days_overdue
+                existing_invoice.last_updated_import_id = import_record.id
+
+                # Preserve first_overdue_at if already set; set it if newly overdue
+                if existing_invoice.first_overdue_at is None and days_overdue > 0:
+                    existing_invoice.first_overdue_at = due_date
+
+                # Restore status if reappearing
+                if existing_invoice.status == "possibly_paid":
+                    existing_invoice.status = "open"
+
+                after_snapshot = {
+                    "outstanding_amount": float(existing_invoice.outstanding_amount),
+                    "gross_amount": float(existing_invoice.gross_amount),
+                    "due_date": existing_invoice.due_date.isoformat(),
+                    "issue_date": existing_invoice.issue_date.isoformat()
+                    if existing_invoice.issue_date
+                    else None,
+                    "currency": existing_invoice.currency,
+                    "customer_id": str(existing_invoice.customer_id),
+                    "status": existing_invoice.status,
+                }
+
+                invoices_updated += 1
+                change_set["updated"].append(
+                    {
+                        "invoice_id": str(existing_invoice.id),
+                        "before": before_snapshot,
+                        "after": after_snapshot,
+                    }
+                )
+
+                # Activity for update
+                update_activity = Activity(
+                    account_id=import_record.account_id,
+                    import_id=import_record.id,
+                    invoice_id=existing_invoice.id,
+                    customer_id=customer.id,
+                    action_type="invoice_updated",
+                    details={"changes": changes},
+                    performed_by="system",
+                )
+                db.add(update_activity)
+            else:
+                # --- UNCHANGED ---
+                # Refresh days_overdue (date-relative) and last_updated_import_id
+                existing_invoice.days_overdue = days_overdue
+                existing_invoice.last_updated_import_id = import_record.id
+                # Set first_overdue_at if the invoice has become overdue since first import
+                if existing_invoice.first_overdue_at is None and days_overdue > 0:
+                    existing_invoice.first_overdue_at = due_date
+                invoices_unchanged += 1
+        else:
+            # --- NEW INVOICE ---
+            first_overdue_at = due_date if days_overdue > 0 else None
+
+            invoice = Invoice(
+                account_id=import_record.account_id,
+                customer_id=customer.id,
+                invoice_number=str(raw_invoice_number).strip(),
+                normalized_invoice_number=normalized_invoice_number,
+                issue_date=issue_date,
+                due_date=due_date,
+                first_overdue_at=first_overdue_at,
+                gross_amount=gross_amount,
+                outstanding_amount=outstanding_amount,
+                currency=currency,
+                status="open",
+                days_overdue=days_overdue,
+                first_seen_import_id=import_record.id,
+                last_updated_import_id=import_record.id,
+            )
+            db.add(invoice)
+            await db.flush()
+            invoices_created += 1
+            change_set["created"].append(
+                {
+                    "invoice_id": str(invoice.id),
+                    "data": {
+                        "invoice_number": invoice.invoice_number,
+                        "customer_id": str(customer.id),
+                        "customer_name": customer.name,
+                        "outstanding_amount": float(invoice.outstanding_amount),
+                        "gross_amount": float(invoice.gross_amount),
+                        "due_date": invoice.due_date.isoformat(),
+                        "currency": invoice.currency,
+                        "status": invoice.status,
+                    },
+                }
+            )
+
         effective_invoice_date = issue_date or due_date
         if customer.last_invoice_date is None or effective_invoice_date > customer.last_invoice_date:
             customer.last_invoice_date = effective_invoice_date
 
-    if invoices_created == 0:
+    # --- DISAPPEARANCE DETECTION (only for full_snapshot imports) ---
+    if scope_type == "full_snapshot":
+        active_statuses = {"open", "promised", "disputed", "paused", "escalated"}
+
+        for norm_num, existing_inv in existing_invoice_map.items():
+            if norm_num in seen_invoice_numbers:
+                continue
+            if existing_inv.status not in active_statuses:
+                continue
+
+            before_snapshot = {
+                "invoice_number": existing_inv.invoice_number,
+                "outstanding_amount": float(existing_inv.outstanding_amount),
+                "gross_amount": float(existing_inv.gross_amount),
+                "due_date": existing_inv.due_date.isoformat(),
+                "customer_id": str(existing_inv.customer_id),
+                "status": existing_inv.status,
+            }
+
+            existing_inv.status = "possibly_paid"
+            existing_inv.last_updated_import_id = import_record.id
+
+            invoices_disappeared += 1
+            change_set["disappeared"].append(
+                {
+                    "invoice_id": str(existing_inv.id),
+                    "before": before_snapshot,
+                }
+            )
+
+            disappear_activity = Activity(
+                account_id=import_record.account_id,
+                import_id=import_record.id,
+                invoice_id=existing_inv.id,
+                customer_id=existing_inv.customer_id,
+                action_type="invoice_disappeared",
+                details={
+                    "invoice_number": existing_inv.invoice_number,
+                    "previous_status": before_snapshot["status"],
+                    "outstanding_amount": before_snapshot["outstanding_amount"],
+                },
+                performed_by="system",
+            )
+            db.add(disappear_activity)
+
+    if (invoices_created + invoices_updated + invoices_unchanged) == 0:
         raise ValueError("No valid rows to import")
+
+    # Recalculate customer aggregates for all affected customers
+    affected_customer_ids: set[uuid.UUID] = set()
+    for customer in customer_cache.values():
+        affected_customer_ids.add(customer.id)
+    # Include customers of disappeared invoices
+    for item in change_set["disappeared"]:
+        cid_str = item["before"].get("customer_id")
+        if cid_str:
+            affected_customer_ids.add(uuid.UUID(cid_str))
+    # Include previous customers of reassigned invoices (their totals are now stale)
+    affected_customer_ids.update(reassigned_old_customer_ids)
+
+    for cid in affected_customer_ids:
+        # Count all non-deleted, non-recovered, non-closed invoices
+        inv_query = select(Invoice).where(
+            Invoice.account_id == import_record.account_id,
+            Invoice.customer_id == cid,
+            Invoice.deleted_at.is_(None),
+            Invoice.status.not_in(["recovered", "closed"]),
+        )
+        inv_result = await db.execute(inv_query)
+        customer_invoices = inv_result.scalars().all()
+
+        # Find the customer object
+        cust = None
+        for cached_cust in customer_cache.values():
+            if cached_cust.id == cid:
+                cust = cached_cust
+                break
+        if cust is None:
+            cust = await db.get(Customer, cid)
+
+        if cust is not None:
+            cust.total_outstanding = sum(float(i.outstanding_amount) for i in customer_invoices)
+            cust.invoice_count = len(customer_invoices)
 
     import_record.status = "confirmed"
     import_record.invoices_created = invoices_created
-    import_record.invoices_updated = 0
-    import_record.invoices_disappeared = 0
-    import_record.invoices_unchanged = 0
+    import_record.invoices_updated = invoices_updated
+    import_record.invoices_disappeared = invoices_disappeared
+    import_record.invoices_unchanged = invoices_unchanged
+    import_record.scope_type = scope_type
     import_record.errors = errors
     import_record.warnings_text = json.dumps(warnings, ensure_ascii=False)
     import_record.change_set = change_set
@@ -304,7 +578,11 @@ async def confirm_import(
         details={
             "method": import_record.method,
             "filename": import_record.original_filename,
+            "scope_type": scope_type,
             "invoices_created": invoices_created,
+            "invoices_updated": invoices_updated,
+            "invoices_disappeared": invoices_disappeared,
+            "invoices_unchanged": invoices_unchanged,
             "customers_created": customers_created,
             "customers_reused": customers_reused,
             "errors": errors,
@@ -323,7 +601,11 @@ async def confirm_import(
     return {
         "import_id": str(import_record.id),
         "status": "confirmed",
+        "scope_type": scope_type,
         "invoices_created": invoices_created,
+        "invoices_updated": invoices_updated,
+        "invoices_disappeared": invoices_disappeared,
+        "invoices_unchanged": invoices_unchanged,
         "customers_created": customers_created,
         "customers_reused": customers_reused,
         "errors": errors,

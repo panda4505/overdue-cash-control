@@ -139,3 +139,36 @@ class TestImportsRouter:
 
         assert response.status_code == 400
         assert "not in file" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_confirm_with_scope_type_full_snapshot(self, test_client, test_account):
+        upload_response = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
+        )
+        upload_data = upload_response.json()
+        mapping = _mapping_from_preview(upload_data["preview"])
+
+        response = await test_client.post(
+            f"/imports/{upload_data['import_id']}/confirm",
+            json={"mapping": mapping, "scope_type": "full_snapshot"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["scope_type"] == "full_snapshot"
+
+    @pytest.mark.asyncio
+    async def test_confirm_with_invalid_scope_type_rejected(self, test_client, test_account):
+        upload_response = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
+        )
+        upload_data = upload_response.json()
+        mapping = _mapping_from_preview(upload_data["preview"])
+
+        response = await test_client.post(
+            f"/imports/{upload_data['import_id']}/confirm",
+            json={"mapping": mapping, "scope_type": "invalid_value"},
+        )
+
+        assert response.status_code == 422

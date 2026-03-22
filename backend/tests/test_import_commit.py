@@ -64,6 +64,16 @@ def _build_csv(headers: list[str], rows: list[list[str]]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _build_two_invoice_csv(
+    invoices: list[list[str]],
+) -> bytes:
+    """Build a CSV with the standard 5-column header and given invoice rows."""
+    return _build_csv(
+        ["Invoice Number", "Client Name", "Due Date", "Amount Due", "Total Amount"],
+        invoices,
+    )
+
+
 class TestCreatePendingImport:
     @pytest.mark.asyncio
     async def test_creates_pending_import_record(self, db_session, test_account):
@@ -434,3 +444,590 @@ class TestMappingValidation:
 
         with pytest.raises(ValueError, match="multiple targets"):
             await confirm_import(db_session, import_id, mapping)
+
+
+class TestDiffEngine:
+    @pytest.mark.asyncio
+    async def test_second_import_unchanged(self, db_session, test_account):
+        today = date.today()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", (today - timedelta(days=10)).isoformat(), "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", (today - timedelta(days=5)).isoformat(), "200.00", "200.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="import1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="import2.csv"
+        )
+        summary2 = await confirm_import(db_session, id2, map2)
+
+        assert summary2["invoices_created"] == 0
+        assert summary2["invoices_updated"] == 0
+        assert summary2["invoices_unchanged"] == 2
+        assert summary2["invoices_disappeared"] == 0
+
+        record = await db_session.get(ImportRecord, id2)
+        assert record is not None
+        assert record.invoices_created == 0
+        assert record.invoices_updated == 0
+        assert record.invoices_unchanged == 2
+        assert record.invoices_disappeared == 0
+        assert record.change_set["created"] == []
+        assert record.change_set["updated"] == []
+        assert record.change_set["disappeared"] == []
+
+    @pytest.mark.asyncio
+    async def test_second_import_updated_balance(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "75.00", "75.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="balance-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="balance-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["invoices_updated"] == 1
+        assert summary["invoices_created"] == 0
+
+        record = await db_session.get(ImportRecord, id2)
+        assert record is not None
+        assert len(record.change_set["updated"]) == 1
+        updated = record.change_set["updated"][0]
+        assert updated["before"]["outstanding_amount"] == 100.0
+        assert updated["after"]["outstanding_amount"] == 75.0
+
+        invoice = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-001"),
+            )
+        )
+        assert invoice is not None
+        assert float(invoice.outstanding_amount) == 75.0
+
+        activity = await db_session.scalar(
+            select(Activity).where(
+                Activity.import_id == id2,
+                Activity.action_type == "invoice_updated",
+            )
+        )
+        assert activity is not None
+
+    @pytest.mark.asyncio
+    async def test_second_import_disappeared_full_snapshot(self, db_session, test_account):
+        today = date.today()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", (today - timedelta(days=10)).isoformat(), "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", (today - timedelta(days=5)).isoformat(), "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv(
+            [["INV-001", "Acme Ltd.", (today - timedelta(days=10)).isoformat(), "100.00", "100.00"]]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="snapshot-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="snapshot-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        assert summary["invoices_disappeared"] == 1
+        assert summary["invoices_unchanged"] == 1
+
+        inv_002 = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-002"),
+            )
+        )
+        assert inv_002 is not None
+        assert inv_002.status == "possibly_paid"
+
+        record = await db_session.get(ImportRecord, id2)
+        assert record is not None
+        assert len(record.change_set["disappeared"]) == 1
+
+        activity = await db_session.scalar(
+            select(Activity).where(
+                Activity.import_id == id2,
+                Activity.action_type == "invoice_disappeared",
+            )
+        )
+        assert activity is not None
+
+    @pytest.mark.asyncio
+    async def test_no_disappearance_without_full_snapshot(self, db_session, test_account):
+        today = date.today()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", (today - timedelta(days=10)).isoformat(), "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", (today - timedelta(days=5)).isoformat(), "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv(
+            [["INV-001", "Acme Ltd.", (today - timedelta(days=10)).isoformat(), "100.00", "100.00"]]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="partial-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="partial-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["invoices_disappeared"] == 0
+
+        inv_002 = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-002"),
+            )
+        )
+        assert inv_002 is not None
+        assert inv_002.status == "open"
+
+    @pytest.mark.asyncio
+    async def test_second_import_new_invoice_alongside_existing(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-003", "Gamma GmbH", due_str, "300.00", "300.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="existing-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="existing-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["invoices_unchanged"] == 1
+        assert summary["invoices_created"] == 1
+        assert summary["invoices_disappeared"] == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_diff_scenario(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", due_str, "200.00", "200.00"],
+                ["INV-003", "Gamma GmbH", due_str, "300.00", "300.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", due_str, "150.00", "150.00"],
+                ["INV-004", "Delta Sarl", due_str, "400.00", "400.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="mixed-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="mixed-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        assert summary["invoices_created"] == 1
+        assert summary["invoices_updated"] == 1
+        assert summary["invoices_unchanged"] == 1
+        assert summary["invoices_disappeared"] == 1
+
+        invoice_count = await db_session.scalar(
+            select(func.count()).select_from(Invoice).where(Invoice.account_id == test_account.id)
+        )
+        assert invoice_count == 4
+
+    @pytest.mark.asyncio
+    async def test_disappeared_not_flagged_if_already_recovered(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="recovered-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        inv_result = await db_session.execute(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-002"),
+            )
+        )
+        inv_002 = inv_result.scalar_one()
+        inv_002.status = "recovered"
+        await db_session.commit()
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="recovered-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        assert summary["invoices_disappeared"] == 0
+
+        inv_002 = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-002"),
+            )
+        )
+        assert inv_002 is not None
+        assert inv_002.status == "recovered"
+
+    @pytest.mark.asyncio
+    async def test_reappeared_invoice_restored_to_open(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv_all = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Beta Corp.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv_missing = _build_two_invoice_csv(
+            [["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_all, filename="reappear-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_missing, filename="reappear-2.csv"
+        )
+        await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        id3, map3, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_all, filename="reappear-3.csv"
+        )
+        summary = await confirm_import(db_session, id3, map3)
+
+        assert summary["invoices_updated"] == 1
+
+        inv_002 = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-002"),
+            )
+        )
+        assert inv_002 is not None
+        assert inv_002.status == "open"
+
+    @pytest.mark.asyncio
+    async def test_customer_aggregates_recalculated_after_update(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "50.00", "50.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="aggregate-update-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="aggregate-update-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        customer = await db_session.scalar(
+            select(Customer).where(
+                Customer.account_id == test_account.id,
+                Customer.normalized_name == normalize_customer_name("Acme Ltd."),
+            )
+        )
+        assert customer is not None
+        assert float(customer.total_outstanding) == 250.0
+
+    @pytest.mark.asyncio
+    async def test_customer_aggregates_include_possibly_paid(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="aggregate-disappear-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="aggregate-disappear-2.csv"
+        )
+        await confirm_import(db_session, id2, map2, scope_type="full_snapshot")
+
+        customer = await db_session.scalar(
+            select(Customer).where(
+                Customer.account_id == test_account.id,
+                Customer.normalized_name == normalize_customer_name("Acme Ltd."),
+            )
+        )
+        assert customer is not None
+        assert float(customer.total_outstanding) == 300.0
+        assert customer.invoice_count == 2
+
+    @pytest.mark.asyncio
+    async def test_change_set_structure_on_update(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "80.00", "80.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="changes-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="changes-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        record = await db_session.get(ImportRecord, id2)
+        assert record is not None
+        assert set(record.change_set.keys()) == {
+            "created",
+            "updated",
+            "disappeared",
+            "customers_created",
+            "customers_merged",
+        }
+        assert set(record.change_set["updated"][0].keys()) == {"invoice_id", "before", "after"}
+        assert record.change_set["updated"][0]["before"]["outstanding_amount"] == 100.0
+        assert record.change_set["updated"][0]["after"]["outstanding_amount"] == 80.0
+
+    @pytest.mark.asyncio
+    async def test_import_committed_activity_includes_all_counters(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "80.00", "80.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="activity-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="activity-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        activity = await db_session.scalar(
+            select(Activity).where(
+                Activity.import_id == id2,
+                Activity.action_type == "import_committed",
+            )
+        )
+        assert activity is not None
+        assert activity.details is not None
+        assert "invoices_updated" in activity.details
+        assert "invoices_disappeared" in activity.details
+        assert "invoices_unchanged" in activity.details
+
+    @pytest.mark.asyncio
+    async def test_incoming_duplicate_invoice_number_skipped(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv_bytes = _build_two_invoice_csv(
+            [
+                ["INV-DUP-1", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-DUP-1", "Beta Corp.", due_str, "200.00", "200.00"],
+            ]
+        )
+
+        import_id, mapping, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv_bytes, filename="duplicate.csv"
+        )
+        summary = await confirm_import(db_session, import_id, mapping)
+
+        assert summary["invoices_created"] == 1
+        assert summary["errors"] >= 1
+        assert any("duplicate" in warning.lower() for warning in summary["warnings"])
+
+    @pytest.mark.asyncio
+    async def test_raw_invoice_number_not_overwritten_on_update(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv([["INV 001", "Acme Ltd.", due_str, "75.00", "75.00"]])
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="raw-number-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="raw-number-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        invoice = await db_session.scalar(
+            select(Invoice).where(
+                Invoice.account_id == test_account.id,
+                Invoice.normalized_invoice_number == normalize_invoice_number("INV-001"),
+            )
+        )
+        assert invoice is not None
+        assert invoice.invoice_number == "INV-001"
+        assert float(invoice.outstanding_amount) == 75.0
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_existing_invoice_skipped_with_warning(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv([["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"]])
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "75.00", "75.00"],
+                ["INV-002", "Beta Corp.", due_str, "50.00", "50.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="ambiguous-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        cust_result = await db_session.execute(
+            select(Customer).where(Customer.account_id == test_account.id)
+        )
+        first_customer = cust_result.scalars().first()
+        assert first_customer is not None
+
+        ambiguous_inv = Invoice(
+            account_id=test_account.id,
+            customer_id=first_customer.id,
+            invoice_number="INV/001",
+            normalized_invoice_number=normalize_invoice_number("INV-001"),
+            due_date=today - timedelta(days=10),
+            gross_amount=999.00,
+            outstanding_amount=999.00,
+            currency="EUR",
+            status="open",
+            days_overdue=10,
+        )
+        db_session.add(ambiguous_inv)
+        await db_session.flush()
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="ambiguous-2.csv"
+        )
+        summary = await confirm_import(db_session, id2, map2)
+
+        assert summary["invoices_updated"] == 0
+        assert summary["errors"] >= 1
+        assert any("ambiguous" in warning.lower() for warning in summary["warnings"])
+
+        invoices = (
+            await db_session.execute(
+                select(Invoice)
+                .where(
+                    Invoice.account_id == test_account.id,
+                    Invoice.normalized_invoice_number == normalize_invoice_number("INV-001"),
+                )
+                .order_by(Invoice.invoice_number)
+            )
+        ).scalars().all()
+        assert [float(invoice.outstanding_amount) for invoice in invoices] == [100.0, 999.0]
+
+    @pytest.mark.asyncio
+    async def test_customer_aggregates_correct_after_reassignment(self, db_session, test_account):
+        today = date.today()
+        due_str = (today - timedelta(days=10)).isoformat()
+        csv1 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Acme Ltd.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+        csv2 = _build_two_invoice_csv(
+            [
+                ["INV-001", "Beta Corp.", due_str, "100.00", "100.00"],
+                ["INV-002", "Acme Ltd.", due_str, "200.00", "200.00"],
+            ]
+        )
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv1, filename="reassign-1.csv"
+        )
+        await confirm_import(db_session, id1, map1)
+
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session, test_account.id, file_bytes=csv2, filename="reassign-2.csv"
+        )
+        await confirm_import(db_session, id2, map2)
+
+        acme = await db_session.scalar(
+            select(Customer).where(
+                Customer.account_id == test_account.id,
+                Customer.normalized_name == normalize_customer_name("Acme Ltd."),
+            )
+        )
+        beta = await db_session.scalar(
+            select(Customer).where(
+                Customer.account_id == test_account.id,
+                Customer.normalized_name == normalize_customer_name("Beta Corp."),
+            )
+        )
+        assert acme is not None
+        assert beta is not None
+        assert float(acme.total_outstanding) == 200.0
+        assert float(beta.total_outstanding) == 100.0

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -21,6 +21,7 @@ class ConfirmImportRequest(BaseModel):
     """Request body for confirming an import."""
 
     mapping: dict[str, str]
+    scope_type: Literal["full_snapshot", "partial", "unknown"] = "unknown"
 
 
 @router.post("/{account_id}/imports/upload")
@@ -75,6 +76,7 @@ async def confirm_import_endpoint(
             db=db,
             import_id=import_id,
             confirmed_mapping=body.mapping,
+            scope_type=body.scope_type,
         )
     except ValueError as exc:
         message = str(exc)
