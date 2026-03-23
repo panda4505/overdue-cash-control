@@ -15,11 +15,8 @@
 ## Standard loop
 
 ### 1. Fresh session starts
-- On Claude Desktop (Code tab): `CLAUDE.md` pre-loads all repo context automatically before the first message. The handoff prompt should contain only:
-  - Session mode (framing / sub-task / Codex prompt drafting / verification / audit)
-  - Step-specific files if needed (Codex output, test results, changed source files)
-  - One line of context if something changed since the last BUILD_LOG update
-- On browser: Lorenzo shares relevant repo files and BUILD_LOG as before.
+- Claude Desktop: `CLAUDE.md` pre-loads all repo context automatically. To start a session, state the session mode only. No other handoff needed.
+- Browser: Lorenzo shares relevant repo files and BUILD_LOG as before.
 - Claude reviews and proposes framing / next step / Codex prompt
 
 ### 2. GPT reviews Claude's output
