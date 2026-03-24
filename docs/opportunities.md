@@ -134,3 +134,23 @@ Possible future anomaly categories beyond the five implemented in M3-ST4 (balanc
 - **History/oscillation anomalies:** Invoices repeatedly disappearing and reappearing, balances oscillating, due dates repeatedly shifting.
 
 These should be evaluated against the trust-calibrated automation doctrine: flag transitions that deserve human attention, suppress noise, and provide the narrowest possible review surface.
+
+## Import trust screen as financial control checkpoint
+
+> **Status:** Not committed. Foundation landing in M4-ST2.
+> **Candidate timing:** M7–M9 (polish and commercial positioning).
+
+- **What:** The import preview / business-diff screen is more than a "review before commit" step. It is a financial control checkpoint: nothing touches live receivables data without the operator seeing an explicit business-diff summary — what invoices are new, what changed, what disappeared, how much money is involved. This is a deliberate product trust boundary.
+- **Why it matters commercially:** Most AR tools either auto-import silently (dangerous) or dump raw spreadsheets on the user (useless). A structured, money-quantified control checkpoint is a differentiated trust signal. It tells the buyer: "This product will never silently corrupt your receivables data." That promise is a wedge — especially for finance-cautious SMBs evaluating whether to trust a new tool with their cash position.
+- **Future directions:** Per-invoice disposition on disappeared items (paid / credited / unknown). Anomaly drill-down with recommended actions. Import-over-import trend visibility (e.g., "your overdue total increased €12k since last import"). Recovery tracking tied to the control checkpoint.
+- **Guardrail:** The trust screen must remain fast, scannable, and non-blocking for routine imports. Operator burden should scale with import risk, not import size.
+
+## Skipped-row repair and guided import recovery
+
+> **Status:** Not committed. Precursor signals landing in M4-ST2 (skipped_rows + warnings).
+> **Candidate timing:** M5–M7 if prioritized.
+
+- **What:** Rows skipped during import (missing fields, invalid dates, duplicate invoice numbers, ambiguous DB matches) should become a recoverable operator workflow, not just warning noise. The product should explain why each row was skipped, guide the operator toward a fix (correct the source file, manually enter the row, resolve the ambiguity), and potentially support targeted retry or re-import of just the failed rows.
+- **Why:** Skipped rows are silent data loss from the operator's perspective. A file with 200 rows and 8 skipped means 8 invoices the operator thinks are tracked but aren't. Over multiple imports, this erodes trust and creates blind spots in the receivables picture — exactly the problem the product exists to solve.
+- **Future directions:** Skipped-row detail panel with per-row explanation and suggested fix. "Fix and retry" flow for correctable issues (e.g., missing due date that the operator can supply manually). Import health score based on skip rate trend across imports. Proactive warning when a file's skip rate exceeds historical baseline.
+- **Relationship to import quality intelligence:** Import quality (see above) flags file-level health issues; skipped-row repair addresses row-level recovery. These are complementary but distinct.
