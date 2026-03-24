@@ -46,7 +46,7 @@ class ImportRecord(Base):
     invoices_updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     invoices_disappeared: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     invoices_unchanged: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     warnings_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Status

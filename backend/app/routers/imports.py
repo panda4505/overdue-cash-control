@@ -16,7 +16,7 @@ from app.models.account import Account
 from app.models.import_record import ImportRecord
 from app.models.user import User
 from app.services.file_parser import parse_file
-from app.services.import_commit import confirm_import, create_pending_import
+from app.services.import_commit import confirm_import, create_pending_import, preview_import
 from app.services.template_service import (
     find_matching_template,
     save_template,
@@ -182,6 +182,41 @@ async def confirm_import_endpoint(
 
     try:
         return await confirm_import(
+            db=db,
+            import_id=import_id,
+            confirmed_mapping=body.mapping,
+            scope_type=body.scope_type,
+            merge_decisions=body.merge_decisions,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "expected 'pending_preview'" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+
+@confirm_router.post("/imports/{import_id}/preview-diff")
+async def preview_diff_endpoint(
+    import_id: uuid.UUID,
+    body: ConfirmImportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Preview the business diff of a pending import without committing."""
+
+    import_query = select(ImportRecord).where(ImportRecord.id == import_id)
+    import_result = await db.execute(import_query)
+    import_record = import_result.scalar_one_or_none()
+
+    if import_record is None:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
+    if import_record.account_id != current_user.account_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        return await preview_import(
             db=db,
             import_id=import_id,
             confirmed_mapping=body.mapping,

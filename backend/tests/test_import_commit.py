@@ -14,7 +14,7 @@ from app.models.activity import Activity
 from app.models.customer import Customer
 from app.models.import_record import ImportRecord
 from app.models.invoice import Invoice
-from app.services.import_commit import confirm_import, create_pending_import
+from app.services.import_commit import confirm_import, create_pending_import, preview_import
 from app.services.ingestion import ingest_file as base_ingest_file
 from app.services.normalization import normalize_customer_name, normalize_invoice_number
 
@@ -245,8 +245,8 @@ class TestConfirmImport:
         record = await db_session.get(ImportRecord, import_id)
         warnings = json.loads(record.warnings_text or "[]")
 
-        assert summary["errors"] == 1
-        assert record.errors == 1
+        assert summary["skipped_rows"] == 1
+        assert record.skipped_rows == 1
         assert isinstance(warnings, list)
         assert any("due_date" in warning for warning in warnings)
 
@@ -408,6 +408,236 @@ class TestConfirmImport:
             summary = await confirm_import(db_session, import_id, mapping)
             assert summary["status"] == "confirmed"
             assert summary["invoices_created"] > 0
+
+
+class TestPreviewImport:
+    @pytest.mark.asyncio
+    async def test_preview_first_import_all_new(self, db_session, test_account):
+        """First import preview: all invoices are new, no updates/disappeared."""
+
+        import_id, mapping, _ = await _create_and_get_pending(db_session, test_account)
+        result = await preview_import(
+            db=db_session,
+            import_id=import_id,
+            confirmed_mapping=mapping,
+            scope_type="full_snapshot",
+        )
+
+        assert result["invoices_created"] > 0
+        assert result["invoices_updated"] == 0
+        assert result["invoices_disappeared"] == 0
+        assert result["invoices_unchanged"] == 0
+        assert len(result["created_invoices"]) == result["invoices_created"]
+        assert result["total_new_amount"] > 0
+        assert result["total_disappeared_amount"] == 0.0
+        assert result["preview_generated_at"] is not None
+
+        full_response_str = json.dumps(result)
+        assert "planned-new-" not in full_response_str
+
+    @pytest.mark.asyncio
+    async def test_preview_no_db_mutation(self, db_session, test_account):
+        """Preview must not create any invoices, customers, or activities."""
+
+        from sqlalchemy import func, select as sa_select
+
+        inv_before = (
+            await db_session.execute(sa_select(func.count()).select_from(Invoice))
+        ).scalar()
+        cust_before = (
+            await db_session.execute(sa_select(func.count()).select_from(Customer))
+        ).scalar()
+        act_before = (
+            await db_session.execute(sa_select(func.count()).select_from(Activity))
+        ).scalar()
+
+        import_id, mapping, _ = await _create_and_get_pending(db_session, test_account)
+        await preview_import(
+            db=db_session,
+            import_id=import_id,
+            confirmed_mapping=mapping,
+            scope_type="full_snapshot",
+        )
+
+        inv_after = (
+            await db_session.execute(sa_select(func.count()).select_from(Invoice))
+        ).scalar()
+        cust_after = (
+            await db_session.execute(sa_select(func.count()).select_from(Customer))
+        ).scalar()
+        act_after = (
+            await db_session.execute(sa_select(func.count()).select_from(Activity))
+        ).scalar()
+
+        assert inv_after == inv_before
+        assert cust_after == cust_before
+        assert act_after == act_before
+
+    @pytest.mark.asyncio
+    async def test_preview_subsequent_import_with_changes(self, db_session, test_account):
+        """Second import: some updated, some new, some disappeared."""
+
+        import_id1, mapping1, _ = await _create_and_get_pending(
+            db_session,
+            test_account,
+            "french_ar_export.csv",
+        )
+        await confirm_import(
+            db=db_session,
+            import_id=import_id1,
+            confirmed_mapping=mapping1,
+            scope_type="full_snapshot",
+        )
+
+        import_id2, mapping2, _ = await _create_and_get_pending(
+            db_session,
+            test_account,
+            "italian_ar_export.csv",
+        )
+        result = await preview_import(
+            db=db_session,
+            import_id=import_id2,
+            confirmed_mapping=mapping2,
+            scope_type="full_snapshot",
+        )
+
+        assert result["invoices_created"] > 0
+        assert result["invoices_disappeared"] > 0
+        assert result["total_disappeared_amount"] > 0
+        assert len(result["disappeared_invoices"]) == result["invoices_disappeared"]
+
+    @pytest.mark.asyncio
+    async def test_preview_parity_with_confirm(self, db_session, test_account):
+        """PARITY TEST: preview and confirm must produce matching counts/details."""
+
+        import_id, mapping, _ = await _create_and_get_pending(db_session, test_account)
+
+        preview_result = await preview_import(
+            db=db_session,
+            import_id=import_id,
+            confirmed_mapping=mapping,
+            scope_type="full_snapshot",
+        )
+
+        confirm_result = await confirm_import(
+            db=db_session,
+            import_id=import_id,
+            confirmed_mapping=mapping,
+            scope_type="full_snapshot",
+        )
+
+        assert preview_result["invoices_created"] == confirm_result["invoices_created"]
+        assert preview_result["invoices_updated"] == confirm_result["invoices_updated"]
+        assert preview_result["invoices_disappeared"] == confirm_result["invoices_disappeared"]
+        assert preview_result["invoices_unchanged"] == confirm_result["invoices_unchanged"]
+        assert preview_result["customers_created"] == confirm_result["customers_created"]
+        assert preview_result["customers_reused"] == confirm_result["customers_reused"]
+        assert preview_result["customers_merged"] == confirm_result["customers_merged"]
+        assert preview_result["skipped_rows"] == confirm_result["skipped_rows"]
+        assert preview_result["anomalies_flagged"] == confirm_result["anomalies_flagged"]
+        assert preview_result["warnings"] == confirm_result["warnings"]
+
+        from sqlalchemy import select as sa_select
+
+        record = (
+            await db_session.execute(
+                sa_select(ImportRecord).where(ImportRecord.id == import_id)
+            )
+        ).scalar_one()
+        change_set = record.change_set
+
+        assert len(change_set["created"]) == preview_result["invoices_created"]
+        assert len(change_set["updated"]) == preview_result["invoices_updated"]
+        assert len(change_set["disappeared"]) == preview_result["invoices_disappeared"]
+
+        preview_created_nums = sorted(
+            invoice["invoice_number"] for invoice in preview_result["created_invoices"]
+        )
+        changeset_created_nums = sorted(
+            entry["data"]["invoice_number"] for entry in change_set["created"]
+        )
+        assert preview_created_nums == changeset_created_nums
+
+        if change_set["updated"]:
+            preview_updated_nums = sorted(
+                invoice["invoice_number"] for invoice in preview_result["updated_invoices"]
+            )
+            changeset_updated_nums = sorted(
+                entry["invoice_number"] for entry in change_set["updated"]
+            )
+            assert preview_updated_nums == changeset_updated_nums
+
+            changeset_changed_fields: dict[str, set[str]] = {}
+            for entry in change_set["updated"]:
+                before = entry["before"]
+                after = entry["after"]
+                changed_keys = {key for key in before if before[key] != after.get(key)}
+                changeset_changed_fields[entry["invoice_number"]] = changed_keys
+
+            for preview_invoice in preview_result["updated_invoices"]:
+                invoice_number = preview_invoice["invoice_number"]
+                preview_keys = set(preview_invoice["changes"].keys())
+                changeset_keys = changeset_changed_fields.get(invoice_number, set())
+                assert preview_keys == changeset_keys, (
+                    f"Changed field mismatch for invoice {invoice_number}: "
+                    f"preview={preview_keys}, change_set={changeset_keys}"
+                )
+
+        if change_set["disappeared"]:
+            preview_disappeared_nums = sorted(
+                invoice["invoice_number"]
+                for invoice in preview_result["disappeared_invoices"]
+            )
+            changeset_disappeared_nums = sorted(
+                entry["before"]["invoice_number"] for entry in change_set["disappeared"]
+            )
+            assert preview_disappeared_nums == changeset_disappeared_nums
+
+    @pytest.mark.asyncio
+    async def test_preview_detects_anomalies(self, db_session, test_account):
+        """Preview should detect anomalies the same way confirm does."""
+
+        today = date.today()
+        due_str = (today - timedelta(days=30)).isoformat()
+
+        csv1 = (
+            "Invoice Number,Client Name,Due Date,Amount Due,Total Amount\n"
+            f"INV-001,Acme Corp,{due_str},1000.00,1000.00\n"
+        ).encode("utf-8")
+
+        id1, map1, _ = await _create_pending_from_bytes(
+            db_session,
+            test_account.id,
+            file_bytes=csv1,
+            filename="round1.csv",
+        )
+        await confirm_import(
+            db=db_session,
+            import_id=id1,
+            confirmed_mapping=map1,
+            scope_type="full_snapshot",
+        )
+
+        csv2 = (
+            "Invoice Number,Client Name,Due Date,Amount Due,Total Amount\n"
+            f"INV-001,Acme Corp,{due_str},1500.00,1500.00\n"
+        ).encode("utf-8")
+        id2, map2, _ = await _create_pending_from_bytes(
+            db_session,
+            test_account.id,
+            file_bytes=csv2,
+            filename="round2.csv",
+        )
+        result = await preview_import(
+            db=db_session,
+            import_id=id2,
+            confirmed_mapping=map2,
+            scope_type="full_snapshot",
+        )
+
+        assert result["anomalies_flagged"] >= 1
+        anomaly_types = [anomaly["anomaly_type"] for anomaly in result["anomalies"]]
+        assert "balance_increase" in anomaly_types
 
 
 class TestMappingValidation:
@@ -1388,7 +1618,12 @@ class TestDiffEngine:
             "customers_merged",
             "anomalies",
         }
-        assert set(record.change_set["updated"][0].keys()) == {"invoice_id", "before", "after"}
+        assert set(record.change_set["updated"][0].keys()) == {
+            "invoice_id",
+            "invoice_number",
+            "before",
+            "after",
+        }
         assert record.change_set["updated"][0]["before"]["outstanding_amount"] == 100.0
         assert record.change_set["updated"][0]["after"]["outstanding_amount"] == 80.0
 
@@ -1420,6 +1655,7 @@ class TestDiffEngine:
         assert "invoices_updated" in activity.details
         assert "invoices_disappeared" in activity.details
         assert "invoices_unchanged" in activity.details
+        assert "skipped_rows" in activity.details
 
     @pytest.mark.asyncio
     async def test_incoming_duplicate_invoice_number_skipped(self, db_session, test_account):
@@ -1438,7 +1674,7 @@ class TestDiffEngine:
         summary = await confirm_import(db_session, import_id, mapping)
 
         assert summary["invoices_created"] == 1
-        assert summary["errors"] >= 1
+        assert summary["skipped_rows"] >= 1
         assert any("duplicate" in warning.lower() for warning in summary["warnings"])
 
     @pytest.mark.asyncio
@@ -1512,7 +1748,7 @@ class TestDiffEngine:
         summary = await confirm_import(db_session, id2, map2)
 
         assert summary["invoices_updated"] == 0
-        assert summary["errors"] >= 1
+        assert summary["skipped_rows"] >= 1
         assert any("ambiguous" in warning.lower() for warning in summary["warnings"])
 
         invoices = (

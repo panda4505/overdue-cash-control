@@ -70,6 +70,33 @@ class TestImportsRouter:
         assert "change_set" not in data
 
     @pytest.mark.asyncio
+    async def test_preview_diff_returns_structured_plan(
+        self, test_client, test_account, test_user, auth_headers
+    ):
+        upload_response = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
+            files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
+        )
+        upload_data = upload_response.json()
+        mapping = _mapping_from_preview(upload_data["preview"])
+
+        response = await test_client.post(
+            f"/imports/{upload_data['import_id']}/preview-diff",
+            headers=auth_headers,
+            json={"mapping": mapping, "scope_type": "full_snapshot"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "preview_generated_at" in data
+        assert "invoices_created" in data
+        assert "created_invoices" in data
+        assert "customer_resolutions" in data
+        assert "total_new_amount" in data
+        assert data["invoices_created"] == len(data["created_invoices"])
+
+    @pytest.mark.asyncio
     async def test_upload_unsupported_file_type(
         self, test_client, test_account, test_user, auth_headers
     ):
@@ -122,6 +149,17 @@ class TestImportsRouter:
         assert "not found" in response.json()["detail"]
 
     @pytest.mark.asyncio
+    async def test_preview_diff_nonexistent_import(
+        self, test_client, test_user, auth_headers
+    ):
+        response = await test_client.post(
+            f"/imports/{uuid.uuid4()}/preview-diff",
+            headers=auth_headers,
+            json={"mapping": {"invoice_number": "x"}},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_confirm_already_confirmed(
         self, test_client, test_account, test_user, auth_headers
     ):
@@ -168,6 +206,26 @@ class TestImportsRouter:
 
         assert response.status_code == 400
         assert "not in file" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_preview_diff_invalid_mapping(
+        self, test_client, test_account, test_user, auth_headers
+    ):
+        upload_response = await test_client.post(
+            f"/accounts/{test_account.id}/imports/upload",
+            headers=auth_headers,
+            files={"file": ("french_ar_export.csv", _read_fixture("french_ar_export.csv"), "text/csv")},
+        )
+        upload_data = upload_response.json()
+        mapping = _mapping_from_preview(upload_data["preview"])
+        mapping["invoice_number"] = "Nonexistent Column"
+
+        response = await test_client.post(
+            f"/imports/{upload_data['import_id']}/preview-diff",
+            headers=auth_headers,
+            json={"mapping": mapping},
+        )
+        assert response.status_code == 400
 
     @pytest.mark.asyncio
     async def test_confirm_with_scope_type_full_snapshot(

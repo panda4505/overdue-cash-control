@@ -99,6 +99,74 @@ export interface SaveTemplateResponse {
   template: AppliedTemplate;
 }
 
+export interface PreviewDiffCreatedInvoice {
+  invoice_number: string;
+  customer_name: string;
+  outstanding_amount: number;
+  due_date: string;
+  currency: string;
+}
+
+export interface PreviewDiffUpdatedInvoice {
+  invoice_number: string;
+  customer_name: string;
+  changes: Record<
+    string,
+    { before: string | number | null; after: string | number | null }
+  >;
+}
+
+export interface PreviewDiffDisappearedInvoice {
+  invoice_number: string;
+  customer_name: string;
+  outstanding_amount: number;
+  days_overdue: number;
+}
+
+export interface PreviewDiffAnomaly {
+  anomaly_type: string;
+  invoice_number?: string;
+  customer_name?: string;
+  details: Record<string, unknown>;
+}
+
+export interface PreviewDiffCustomerResolution {
+  file_name: string;
+  resolved_to: string;
+  resolution_type: string;
+  score: number | null;
+  is_new: boolean;
+}
+
+export interface PreviewDiffCustomerMerge {
+  file_name: string;
+  merged_into: string;
+  match_type: string;
+}
+
+export interface PreviewDiffResponse {
+  preview_generated_at: string;
+  invoices_created: number;
+  invoices_updated: number;
+  invoices_disappeared: number;
+  invoices_unchanged: number;
+  customers_created: number;
+  customers_reused: number;
+  customers_merged: number;
+  skipped_rows: number;
+  warnings: string[];
+  anomalies_flagged: number;
+  total_new_amount: number;
+  total_disappeared_amount: number;
+  scope_type: string;
+  created_invoices: PreviewDiffCreatedInvoice[];
+  updated_invoices: PreviewDiffUpdatedInvoice[];
+  disappeared_invoices: PreviewDiffDisappearedInvoice[];
+  anomalies: PreviewDiffAnomaly[];
+  customer_resolutions: PreviewDiffCustomerResolution[];
+  customers_merged_detail: PreviewDiffCustomerMerge[];
+}
+
 export const TARGET_FIELDS: TargetFieldDefinition[] = [
   {
     targetField: "invoice_number",

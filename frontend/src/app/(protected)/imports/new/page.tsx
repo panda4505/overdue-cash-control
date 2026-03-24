@@ -5,11 +5,12 @@ import type {
   DragEvent,
   FormEvent,
 } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
+  ChevronDown,
   CheckCircle2,
   FileSpreadsheet,
   Loader2,
@@ -38,18 +39,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import {
   SCOPE_OPTIONS,
   TARGET_FIELDS,
-  TOTAL_TARGET_FIELDS,
   buildInitialMappings,
   buildMappingDict,
   collectAvailableHeaders,
   getMappingValidationErrors,
   type MappingSelection,
+  type PreviewDiffResponse,
   type PreviewColumnMapping,
   type SaveTemplateResponse,
   type ScopeType,
@@ -97,6 +97,48 @@ function getConfidenceText(mapping: PreviewColumnMapping) {
   return `${mapping.method} • ${formatPercent(mapping.confidence)}`;
 }
 
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: "EUR",
+  }).format(amount);
+}
+
+function formatPreviewValue(value: string | number | boolean | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+
+  return String(value);
+}
+
+function formatAnomalyDescription(
+  anomalyType: string,
+  details: Record<string, unknown>,
+) {
+  if (anomalyType === "balance_increase") {
+    return `Balance ${formatPreviewValue(details.previous_amount as number | null)} -> ${formatPreviewValue(details.new_amount as number | null)} (+${formatPreviewValue(details.increase as number | null)})`;
+  }
+
+  if (anomalyType === "due_date_change") {
+    return `Due date ${formatPreviewValue(details.previous_due_date as string | null)} -> ${formatPreviewValue(details.new_due_date as string | null)}`;
+  }
+
+  if (anomalyType === "reappearance") {
+    return `Previously ${formatPreviewValue(details.previous_status as string | null)}, restored to ${formatPreviewValue(details.restored_to as string | null)}`;
+  }
+
+  if (anomalyType === "overdue_spike") {
+    return `Overdue invoices ${formatPreviewValue(details.previous_overdue_count as number | null)} -> ${formatPreviewValue(details.new_overdue_count as number | null)} (delta ${formatPreviewValue(details.delta as number | null)})`;
+  }
+
+  if (anomalyType === "cluster_risk") {
+    return `${formatPreviewValue(details.overdue_invoice_count as number | null)} overdue invoices after import`;
+  }
+
+  return "Requires review.";
+}
+
 export default function NewImportPage() {
   const { account, refreshAccount } = useAuth();
   const router = useRouter();
@@ -116,6 +158,10 @@ export default function NewImportPage() {
   const [templateName, setTemplateName] = useState("");
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [previewDiff, setPreviewDiff] = useState<PreviewDiffResponse | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   const preview = uploadResult?.preview ?? null;
   const previewMapping = preview?.mapping ?? null;
@@ -131,9 +177,12 @@ export default function NewImportPage() {
   const fuzzyMatches = uploadResult?.fuzzy_matches ?? null;
   const autoMerges = fuzzyMatches?.auto_merges ?? [];
   const candidates = fuzzyMatches?.candidates ?? [];
-  const mappedFieldCount = Object.keys(mappingDict).length;
-  const userMergedCount = Object.keys(mergeDecisions).length;
-  const keptAsNewCount = candidates.length - userMergedCount;
+  const mergeDetailByFileName = new Map(
+    (previewDiff?.customers_merged_detail ?? []).map((merge) => [
+      merge.file_name,
+      merge.match_type,
+    ]),
+  );
 
   const resetPreviewState = () => {
     setUploadResult(null);
@@ -142,6 +191,21 @@ export default function NewImportPage() {
     setSavedTemplateName(null);
     setShowTemplateForm(false);
     setTemplateName("");
+    setPreviewDiff(null);
+    setPreviewError(null);
+    setExpandedSections(new Set());
+  };
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const handleFileSelection = (file: File | null) => {
@@ -220,6 +284,9 @@ export default function NewImportPage() {
       setSavedTemplateName(result.applied_template?.name ?? null);
       setTemplateName(result.applied_template?.name ?? "");
       setShowTemplateForm(false);
+      setPreviewDiff(null);
+      setPreviewError(null);
+      setExpandedSections(new Set());
       setStep(2);
       toast.success("Import preview ready");
     } catch (error) {
@@ -317,6 +384,38 @@ export default function NewImportPage() {
     }
   };
 
+  const fetchPreviewDiff = async () => {
+    if (!uploadResult?.import_id || !isMappingValid) {
+      return;
+    }
+
+    setIsLoadingPreview(true);
+    setPreviewError(null);
+    setPreviewDiff(null);
+    setExpandedSections(new Set());
+
+    try {
+      const result = await apiFetch<PreviewDiffResponse>(
+        `/imports/${uploadResult.import_id}/preview-diff`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            mapping: buildMappingDict(mappings),
+            scope_type: scopeType,
+            merge_decisions: candidates.length > 0 ? mergeDecisions : null,
+          }),
+        },
+      );
+      setPreviewDiff(result);
+    } catch (error) {
+      const message = getErrorMessage(error, "Unable to generate import preview.");
+      setPreviewError(message);
+      toast.error(message);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
   const handleConfirmImport = async () => {
     if (!uploadResult?.import_id || !isMappingValid) {
       return;
@@ -347,6 +446,13 @@ export default function NewImportPage() {
     }
   };
 
+  useEffect(() => {
+    if (step === 4 && previewDiff === null && !isLoadingPreview) {
+      void fetchPreviewDiff();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   if (!account) {
     return <p className="text-sm text-muted-foreground">Loading account...</p>;
   }
@@ -369,7 +475,7 @@ export default function NewImportPage() {
           { stepNumber: 1, label: "Upload" },
           { stepNumber: 2, label: "Mapping" },
           { stepNumber: 3, label: "Fuzzy Match" },
-          { stepNumber: 4, label: "Review" },
+          { stepNumber: 4, label: "Review Changes" },
         ].map((item) => {
           const isActive = step === item.stepNumber;
           const isComplete = step > item.stepNumber;
@@ -938,212 +1044,635 @@ export default function NewImportPage() {
 
       {step === 4 && preview && previewMapping ? (
         <div className="space-y-6">
-          <Card className="bg-background/90">
-            <CardHeader>
-              <CardTitle>Review &amp; Confirm</CardTitle>
-              <CardDescription>
-                Final check before the pending import is confirmed.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Filename
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {preview.filename}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  File size
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {formatBytes(preview.file_size_bytes)}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Total rows
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {preview.total_rows}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Scope type
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {formatScopeLabel(scopeType)}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Mapping summary
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {mappedFieldCount} of {TOTAL_TARGET_FIELDS} fields mapped
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Template
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {savedTemplateName ?? "No template saved"}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Auto-matched
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {autoMerges.length}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  User-merged
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {userMergedCount}
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Kept as new
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {keptAsNewCount}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {uploadResult?.duplicate_warning ? (
-            <Alert>
-              <AlertTitle>Duplicate warning</AlertTitle>
-              <AlertDescription>{uploadResult.duplicate_warning}</AlertDescription>
-            </Alert>
+          {isLoadingPreview ? (
+            <Card className="bg-background/90">
+              <CardHeader className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                  <div>
+                    <CardTitle>Analyzing import...</CardTitle>
+                    <CardDescription>
+                      Building the business diff preview for this file.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-5">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="space-y-3 rounded-xl border bg-muted/10 p-4 animate-pulse"
+                    >
+                      <div className="h-3 w-24 rounded bg-muted" />
+                      <div className="h-8 w-16 rounded bg-muted" />
+                      <div className="h-3 w-20 rounded bg-muted" />
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-3 rounded-xl border p-4 animate-pulse">
+                  <div className="h-4 w-40 rounded bg-muted" />
+                  <div className="h-24 w-full rounded bg-muted/70" />
+                </div>
+                <div className="space-y-3 rounded-xl border p-4 animate-pulse">
+                  <div className="h-4 w-48 rounded bg-muted" />
+                  <div className="h-20 w-full rounded bg-muted/70" />
+                </div>
+              </CardContent>
+            </Card>
           ) : null}
 
-          {!isMappingValid ? (
+          {!isLoadingPreview && previewError ? (
             <Alert variant="destructive">
-              <AlertTitle>Mapping validation still needs attention</AlertTitle>
-              <AlertDescription className="space-y-2">
-                {mappingValidationErrors.map((message) => (
-                  <p key={message}>{message}</p>
-                ))}
+              <AlertCircle className="size-4" />
+              <AlertTitle>Unable to generate import preview</AlertTitle>
+              <AlertDescription className="space-y-4">
+                <p>{previewError}</p>
+                <Button type="button" variant="outline" onClick={fetchPreviewDiff}>
+                  Retry
+                </Button>
               </AlertDescription>
             </Alert>
           ) : null}
 
-          <Card className="bg-background/90">
-            <CardHeader>
-              <CardTitle>Optional template</CardTitle>
-              <CardDescription>
-                Save the current mapping if you expect to import files with the
-                same structure again.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {savedTemplateName ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3">
-                  <Badge>{savedTemplateName}</Badge>
-                  <p className="text-sm text-muted-foreground">
-                    This template name will be shown for the current import.
-                  </p>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No template saved for this import yet.
-                </p>
-              )}
+          {!isLoadingPreview && previewDiff ? (
+            <>
+              {uploadResult?.duplicate_warning ? (
+                <Alert className="border-amber-200 bg-amber-50/70 text-amber-950 [&>svg]:text-amber-600">
+                  <AlertCircle className="size-4" />
+                  <AlertTitle>Duplicate warning</AlertTitle>
+                  <AlertDescription>{uploadResult.duplicate_warning}</AlertDescription>
+                </Alert>
+              ) : null}
 
-              {showTemplateForm ? (
-                <form className="space-y-4" onSubmit={handleSaveTemplate}>
-                  <div className="space-y-2">
-                    <Label htmlFor="template-name">Template name</Label>
-                    <Input
-                      id="template-name"
-                      value={templateName}
-                      onChange={(event) => setTemplateName(event.target.value)}
-                      placeholder="Pohoda monthly AR"
-                      disabled={isSavingTemplate}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      disabled={!isMappingValid || isSavingTemplate}
-                    >
-                      {isSavingTemplate ? (
-                        <>
-                          <Loader2 className="size-4 animate-spin" />
-                          Saving template...
-                        </>
-                      ) : (
-                        "Save Template"
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                <Card className="bg-background/90">
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardDescription>New invoices</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <p
+                      className={cn(
+                        "text-3xl font-semibold tracking-tight",
+                        previewDiff.invoices_created > 0
+                          ? "text-emerald-600"
+                          : "text-foreground",
                       )}
-                    </Button>
+                    >
+                      {previewDiff.invoices_created}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {formatCurrency(previewDiff.total_new_amount)}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-background/90">
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardDescription>Updated</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <p
+                      className={cn(
+                        "text-3xl font-semibold tracking-tight",
+                        previewDiff.invoices_updated > 0
+                          ? "text-amber-600"
+                          : "text-foreground",
+                      )}
+                    >
+                      {previewDiff.invoices_updated}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Changed invoice records
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {scopeType === "full_snapshot" ? (
+                  <Card className="bg-background/90">
+                    <CardHeader className="space-y-1 pb-2">
+                      <CardDescription>No longer in file</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-1">
+                      <p
+                        className={cn(
+                          "text-3xl font-semibold tracking-tight",
+                          previewDiff.invoices_disappeared > 0
+                            ? "text-orange-600"
+                            : "text-foreground",
+                        )}
+                      >
+                        {previewDiff.invoices_disappeared}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatCurrency(previewDiff.total_disappeared_amount)}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                <Card className="bg-background/90">
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardDescription>Anomalies</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <p className="text-3xl font-semibold tracking-tight">
+                      {previewDiff.anomalies_flagged}
+                    </p>
+                    {previewDiff.anomalies_flagged > 0 ? (
+                      <Badge
+                        variant="secondary"
+                        className="bg-amber-100 text-amber-800"
+                      >
+                        Review flagged items
+                      </Badge>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No anomalies flagged
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-background/90">
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardDescription>Unchanged</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <p className="text-3xl font-semibold tracking-tight text-muted-foreground">
+                      {previewDiff.invoices_unchanged}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      No business changes
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="space-y-4">
+                {previewDiff.invoices_created > 0 ? (
+                  <Card className="bg-background/90">
+                    <CardHeader className="pb-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                        onClick={() => toggleSection("created")}
+                      >
+                        <div>
+                          <CardTitle>New invoices ({previewDiff.invoices_created})</CardTitle>
+                          <CardDescription>
+                            Invoices that will be created on confirm.
+                          </CardDescription>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            "size-4 transition-transform",
+                            expandedSections.has("created") && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    </CardHeader>
+                    {expandedSections.has("created") ? (
+                      <CardContent>
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="min-w-full border-collapse text-left text-sm">
+                            <thead className="bg-muted/40">
+                              <tr>
+                                <th className="border-b px-3 py-2 font-medium">Invoice #</th>
+                                <th className="border-b px-3 py-2 font-medium">Customer</th>
+                                <th className="border-b px-3 py-2 font-medium">Amount</th>
+                                <th className="border-b px-3 py-2 font-medium">Due Date</th>
+                                <th className="border-b px-3 py-2 font-medium">Currency</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {previewDiff.created_invoices.map((invoice) => (
+                                <tr
+                                  key={`${invoice.invoice_number}-${invoice.customer_name}`}
+                                  className="border-b last:border-b-0"
+                                >
+                                  <td className="px-3 py-2">{invoice.invoice_number}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.customer_name}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {formatCurrency(invoice.outstanding_amount)}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.due_date}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.currency}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    ) : null}
+                  </Card>
+                ) : null}
+
+                {previewDiff.invoices_updated > 0 ? (
+                  <Card className="bg-background/90">
+                    <CardHeader className="pb-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                        onClick={() => toggleSection("updated")}
+                      >
+                        <div>
+                          <CardTitle>Updated invoices ({previewDiff.invoices_updated})</CardTitle>
+                          <CardDescription>
+                            Existing invoices with detected business changes.
+                          </CardDescription>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            "size-4 transition-transform",
+                            expandedSections.has("updated") && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    </CardHeader>
+                    {expandedSections.has("updated") ? (
+                      <CardContent>
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="min-w-full border-collapse text-left text-sm">
+                            <thead className="bg-muted/40">
+                              <tr>
+                                <th className="border-b px-3 py-2 font-medium">Invoice #</th>
+                                <th className="border-b px-3 py-2 font-medium">Customer</th>
+                                <th className="border-b px-3 py-2 font-medium">Changes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {previewDiff.updated_invoices.map((invoice) => (
+                                <tr
+                                  key={`${invoice.invoice_number}-${invoice.customer_name}`}
+                                  className="border-b align-top last:border-b-0"
+                                >
+                                  <td className="px-3 py-2">{invoice.invoice_number}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.customer_name}
+                                  </td>
+                                  <td className="space-y-1 px-3 py-2 text-sm text-muted-foreground">
+                                    {Object.entries(invoice.changes).map(
+                                      ([fieldName, change]) => (
+                                        <div key={fieldName}>
+                                          {fieldName}: {formatPreviewValue(change.before)}{" -> "}
+                                          {formatPreviewValue(change.after)}
+                                        </div>
+                                      ),
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    ) : null}
+                  </Card>
+                ) : null}
+
+                {previewDiff.invoices_disappeared > 0 && scopeType === "full_snapshot" ? (
+                  <Card className="bg-background/90">
+                    <CardHeader className="pb-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                        onClick={() => toggleSection("disappeared")}
+                      >
+                        <div>
+                          <CardTitle>
+                            No longer in file ({previewDiff.invoices_disappeared})
+                          </CardTitle>
+                          <CardDescription>
+                            Open invoices that would be marked as possibly paid.
+                          </CardDescription>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            "size-4 transition-transform",
+                            expandedSections.has("disappeared") && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    </CardHeader>
+                    {expandedSections.has("disappeared") ? (
+                      <CardContent>
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="min-w-full border-collapse text-left text-sm">
+                            <thead className="bg-muted/40">
+                              <tr>
+                                <th className="border-b px-3 py-2 font-medium">Invoice #</th>
+                                <th className="border-b px-3 py-2 font-medium">Customer</th>
+                                <th className="border-b px-3 py-2 font-medium">Outstanding</th>
+                                <th className="border-b px-3 py-2 font-medium">Days Overdue</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {previewDiff.disappeared_invoices.map((invoice) => (
+                                <tr
+                                  key={`${invoice.invoice_number}-${invoice.customer_name}`}
+                                  className="border-b last:border-b-0"
+                                >
+                                  <td className="px-3 py-2">{invoice.invoice_number}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.customer_name}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {formatCurrency(invoice.outstanding_amount)}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {invoice.days_overdue}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    ) : null}
+                  </Card>
+                ) : null}
+
+                {previewDiff.anomalies_flagged > 0 ? (
+                  <Card className="bg-background/90">
+                    <CardHeader className="pb-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                        onClick={() => toggleSection("anomalies")}
+                      >
+                        <div>
+                          <CardTitle>Anomalies ({previewDiff.anomalies_flagged})</CardTitle>
+                          <CardDescription>
+                            Differential risk signals detected from this import.
+                          </CardDescription>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            "size-4 transition-transform",
+                            expandedSections.has("anomalies") && "rotate-180",
+                          )}
+                        />
+                      </button>
+                    </CardHeader>
+                    {expandedSections.has("anomalies") ? (
+                      <CardContent className="space-y-3">
+                        {previewDiff.anomalies.map((anomaly, index) => (
+                          <div
+                            key={`${anomaly.anomaly_type}-${anomaly.invoice_number ?? anomaly.customer_name ?? index}`}
+                            className="rounded-xl border bg-muted/10 p-4"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="secondary">{anomaly.anomaly_type}</Badge>
+                              {anomaly.invoice_number ? (
+                                <span className="text-sm font-medium">
+                                  {anomaly.invoice_number}
+                                </span>
+                              ) : null}
+                              {!anomaly.invoice_number && anomaly.customer_name ? (
+                                <span className="text-sm font-medium">
+                                  {anomaly.customer_name}
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              {formatAnomalyDescription(
+                                anomaly.anomaly_type,
+                                anomaly.details,
+                              )}
+                            </p>
+                          </div>
+                        ))}
+                      </CardContent>
+                    ) : null}
+                  </Card>
+                ) : null}
+
+                <Card className="bg-background/90">
+                  <CardHeader className="pb-3">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 text-left"
+                      onClick={() => toggleSection("customers")}
+                    >
+                      <div>
+                        <CardTitle>
+                          Customer resolution ({previewDiff.customer_resolutions.length} customers)
+                        </CardTitle>
+                        <CardDescription>
+                          How file customers map to existing or new records.
+                        </CardDescription>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          "size-4 transition-transform",
+                          expandedSections.has("customers") && "rotate-180",
+                        )}
+                      />
+                    </button>
+                  </CardHeader>
+                  {expandedSections.has("customers") ? (
+                    <CardContent>
+                      <div className="overflow-x-auto rounded-lg border">
+                        <table className="min-w-full border-collapse text-left text-sm">
+                          <thead className="bg-muted/40">
+                            <tr>
+                              <th className="border-b px-3 py-2 font-medium">File Name</th>
+                              <th className="border-b px-3 py-2 font-medium">Resolved To</th>
+                              <th className="border-b px-3 py-2 font-medium">How</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {previewDiff.customer_resolutions.map((resolution) => (
+                              <tr
+                                key={`${resolution.file_name}-${resolution.resolved_to}`}
+                                className="border-b last:border-b-0"
+                              >
+                                <td className="px-3 py-2">{resolution.file_name}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span>{resolution.resolved_to}</span>
+                                    {resolution.is_new ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="border-emerald-200 text-emerald-700"
+                                      >
+                                        New
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {mergeDetailByFileName.get(resolution.file_name) ??
+                                    resolution.resolution_type}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  ) : null}
+                </Card>
+              </div>
+
+              {previewDiff.skipped_rows > 0 ? (
+                <Alert>
+                  <AlertTitle>{previewDiff.skipped_rows} rows skipped</AlertTitle>
+                  <AlertDescription className="space-y-3">
+                    <p>
+                      Review the warnings below before confirming the import.
+                    </p>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border bg-muted/10 px-3 py-2 text-left text-sm"
+                      onClick={() => toggleSection("warnings")}
+                    >
+                      <span>Skipped row details</span>
+                      <ChevronDown
+                        className={cn(
+                          "size-4 transition-transform",
+                          expandedSections.has("warnings") && "rotate-180",
+                        )}
+                      />
+                    </button>
+                    {expandedSections.has("warnings") ? (
+                      <div className="space-y-2 rounded-lg border bg-muted/10 p-3">
+                        {previewDiff.warnings.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl border bg-muted/15 p-4 text-sm text-muted-foreground">
+                <span>File: {preview.filename}</span>
+                <span>Scope: {formatScopeLabel(scopeType)}</span>
+                {savedTemplateName ? <span>Template: {savedTemplateName}</span> : null}
+                <span>Total rows: {preview.total_rows}</span>
+              </div>
+
+              <Card className="bg-background/90">
+                <CardHeader>
+                  <CardTitle>Optional template</CardTitle>
+                  <CardDescription>
+                    Save the current mapping if you expect to import files with the
+                    same structure again.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {savedTemplateName ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3">
+                      <Badge>{savedTemplateName}</Badge>
+                      <p className="text-sm text-muted-foreground">
+                        This template name will be shown for the current import.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No template saved for this import yet.
+                    </p>
+                  )}
+
+                  {showTemplateForm ? (
+                    <form className="space-y-4" onSubmit={handleSaveTemplate}>
+                      <div className="space-y-2">
+                        <Label htmlFor="template-name">Template name</Label>
+                        <Input
+                          id="template-name"
+                          value={templateName}
+                          onChange={(event) => setTemplateName(event.target.value)}
+                          placeholder="Pohoda monthly AR"
+                          disabled={isSavingTemplate}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          disabled={!isMappingValid || isSavingTemplate}
+                        >
+                          {isSavingTemplate ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              Saving template...
+                            </>
+                          ) : (
+                            "Save Template"
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={isSavingTemplate}
+                          onClick={() => setShowTemplateForm(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  ) : (
                     <Button
                       type="button"
-                      variant="ghost"
-                      disabled={isSavingTemplate}
-                      onClick={() => setShowTemplateForm(false)}
+                      variant="outline"
+                      disabled={!isMappingValid}
+                      onClick={() => setShowTemplateForm(true)}
                     >
-                      Cancel
+                      Save Template
                     </Button>
-                  </div>
-                </form>
-              ) : (
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPreviewDiff(null);
+                      setPreviewError(null);
+                      setExpandedSections(new Set());
+                      setStep(candidates.length > 0 ? 3 : 2);
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    onClick={() => router.push("/dashboard")}
+                  >
+                    Cancel
+                  </Button>
+                </div>
                 <Button
                   type="button"
-                  variant="outline"
-                  disabled={!isMappingValid}
-                  onClick={() => setShowTemplateForm(true)}
+                  size="lg"
+                  disabled={!previewDiff || isLoadingPreview || isConfirming}
+                  onClick={handleConfirmImport}
                 >
-                  Save Template
+                  {isConfirming ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Confirming...
+                    </>
+                  ) : (
+                    "Confirm Import"
+                  )}
                 </Button>
-              )}
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setStep(candidates.length > 0 ? 3 : 2)}
-              >
-                Back
-              </Button>
-              <Button
-                type="button"
-                size="lg"
-                disabled={!isMappingValid || isConfirming}
-                onClick={handleConfirmImport}
-              >
-                {isConfirming ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Confirming...
-                  </>
-                ) : (
-                  "Confirm Import"
-                )}
-              </Button>
-            </CardFooter>
-          </Card>
-
-          <Separator />
-
-          <div className="rounded-xl border bg-muted/15 p-4 text-sm text-muted-foreground">
-            Encoding: {preview.encoding ?? "Unknown"} • Delimiter:{" "}
-            {preview.delimiter ?? "Unknown"} • Decimal separator:{" "}
-            {preview.decimal_separator ?? "Unknown"} • Thousands separator:{" "}
-            {preview.thousands_separator ?? "Unknown"} • Date format:{" "}
-            {preview.date_format ?? "Not detected"}
-          </div>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
