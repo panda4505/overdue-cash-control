@@ -15,18 +15,18 @@
 ## Current State
 
 - **Milestone:** 4 of 10 — IN PROGRESS
-- **Sub-task:** M4-ST2 COMPLETE. M4-ST1 (Part 1 backend + Part 2 frontend) COMPLETE.
-- **Status:** Backend 378 tests green. Frontend: tsc + build green. Browser smoke green (trust screen load, Back/re-preview, template save, confirm, dashboard redirect all verified).
-- **Latest validation:** Full operator path tested: upload → mapping → fuzzy decisions → trust screen with diff data + money totals + anomalies + customer resolutions visible → confirm → dashboard. Malformed-source CSV incident during testing (Expected 15 fields in line 8, saw 16) was correct parser strictness, not an M4-ST2 defect.
+- **Sub-task:** M4-ST3 COMPLETE. M4-ST2 COMPLETE. M4-ST1 (Part 1 backend + Part 2 frontend) COMPLETE.
+- **Status:** Backend 398 tests green (378 existing + 20 dashboard). Frontend: tsc + build green.
+- **Latest validation:** Dashboard endpoint verified: backend import OK, 20 dashboard tests passed (empty state, aging boundaries, reconciliation invariant, live date math proof, possibly_paid inclusion, account isolation, soft deletes, stale threshold, feed filtering, subset scoping), frontend tsc + build green.
 - **Blockers:** None
 - **Last session:** 2026-03-24
-- **Next:** M4-ST3 — Dashboard with current overdue picture. Framing pass required.
+- **Next:** M4-ST4 — Action queue. Framing pass required.
 
 ## Implementation Map
 
 ### Backend (`backend/app/`)
 
-**FastAPI app** (`main.py`): Routes registered for auth, webhooks, upload, import lifecycle (account-scoped upload + save-template + confirm). CORS configured for frontend. Health check at `/health`. Version 0.2.0. `/test-email` removed.
+**FastAPI app** (`main.py`): Routes registered for auth, webhooks, upload, import lifecycle (account-scoped upload + save-template + confirm), dashboard. CORS configured for frontend. Health check at `/health`. Version 0.2.0. `/test-email` removed.
 
 **Auth** (`routers/auth.py`, `services/auth.py`, `dependencies.py`): Register (email+password only, company_name deferred to onboarding), login, me, update account. Email normalized (trim+lowercase). bcrypt hashing via passlib. JWT via python-jose. `get_current_user` dependency on all protected routes. Account isolation: `current_user.account_id` validated on all account-scoped endpoints.
 
@@ -69,6 +69,7 @@
 - `routers/upload.py`: `POST /upload` — auth-protected stateless preview (no DB write)
 - `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/save-template` — persist confirmed mapping for reuse. `POST /imports/{import_id}/preview-diff` — business diff preview (structured plan without DB commit). `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Both preview-diff and confirm use the same request body. Validated strictly — unknown customer IDs raise 400.
 - `routers/webhooks.py`: Resend inbound email webhook. Downloads attachments, feeds into ingestion pipeline.
+- `routers/dashboard.py`: `GET /dashboard` — read-only dashboard endpoint returning complete overdue picture. Typed Pydantic response (DashboardResponse). All calculations use live date math (CURRENT_DATE - due_date), never stored days_overdue. Total overdue includes possibly_paid (BUILD_LOG doctrine). Disputed and possibly_paid counts scoped as overdue subsets (due_date < today). Aging buckets: Current (not yet due), 1–7, 8–30, 31–60, 60+ days. Top exposure customer. Recent changes feed with overfetch→filter→trim (50 candidates, 15 returned). Stale-data indicator (last_import_at > 24h). Amount serialization: fixed 2-decimal strings.
 
 ### Database
 
@@ -78,7 +79,7 @@ PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo:
 - `a1b2c3d4e5f6`: company_name nullable, existing accounts updated to EUR/Europe/Paris
 - `8a7266974e1b`: rename errors to skipped_rows on import_records
 
-### Test suite (378 tests)
+### Test suite (398 tests)
 
 - `test_file_parser.py` — 86 tests: 5 CSV + 1 XLSX fixture, encoding fallback, edge cases
 - `test_column_mapper.py` — 48 tests: 6-language dictionary, template, LLM fallback, conflicts
@@ -93,6 +94,7 @@ PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo:
 - `test_auth.py` — 22 tests: register/login/me/update account, protected routes, account isolation, `/test-email` removal
 - `test_auth_service.py` — 9 tests: password hashing and JWT token helpers
 - `test_template_service.py` — 6 tests: save-template persistence, idempotency, wrong-account protection, strict auto-apply
+- `test_dashboard.py` — 20 tests: empty state, overdue totals with possibly_paid inclusion, aging bucket boundaries (8 boundary dates), aging reconciliation (overdue buckets sum == total_overdue), live date math proof (stale days_overdue=999 ignored), top exposure correct customer, top exposure null when no overdue, disputed/possibly_paid as overdue subsets (not-yet-due excluded), account isolation, soft delete exclusion, stale threshold, recent changes filtering and descriptions, last import ordering, recovered/closed exclusion, current bucket not-yet-due inclusion
 - DB tests require `TEST_DATABASE_URL` (must differ from `DATABASE_URL`). Per-test NullPool engine + TRUNCATE cleanup.
 
 ### Sample data (`sample-data/`)
@@ -101,7 +103,7 @@ PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo:
 
 ### Frontend (`frontend/`)
 
-Next.js 14 + Tailwind CSS 3 + shadcn/ui v3 (New York, Zinc, HSL CSS variables) + sonner. Shared API client with explicit auth mode (required/none), scoped 401 handling. Auth context provider with resilient fetchMe. Login, register, onboarding, protected layout with sidebar nav. Import flow: upload → column mapping (14 canonical target fields, client-side validation mirroring backend rules) → fuzzy match decisions → trust screen (business diff preview with summary cards, expandable detail sections, customer resolution visibility, anomaly display, template save) → confirm. Dashboard placeholder. Post-login routing based on company_name null check.
+Next.js 14 + Tailwind CSS 3 + shadcn/ui v3 (New York, Zinc, HSL CSS variables) + sonner. Shared API client with explicit auth mode (required/none), scoped 401 handling. Auth context provider with resilient fetchMe. Login, register, onboarding, protected layout with sidebar nav. Import flow: upload → column mapping (14 canonical target fields, client-side validation mirroring backend rules) → fuzzy match decisions → trust screen (business diff preview with summary cards, expandable detail sections, customer resolution visibility, anomaly display, template save) → confirm. Dashboard: summary cards (total overdue, overdue today, disputes open, payment review), wow-moment narrative strip, aging breakdown table, recent changes feed, last import footer, stale-data warning. Empty state for no-import accounts. Post-login routing based on company_name null check. shadcn Table component added for dashboard aging breakdown.
 
 ### Docs (`docs/`)
 
@@ -125,6 +127,13 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Customer aggregates (total_outstanding, invoice_count) recalculated from DB, not incremental. Includes reassignment old customers. possibly_paid invoices remain in outstanding total until user confirms payment.
 - Customer.last_invoice_date is NOT recalculated alongside aggregates — known staleness risk on disappearance/reassignment (deferred fix)
 
+**M4-ST3 dashboard invariants (carry forward):**
+- All overdue/aging calculations use live date math (CURRENT_DATE - due_date), never stored Invoice.days_overdue (which is only updated during import commits and becomes stale between imports)
+- Total overdue includes possibly_paid. Payment Review card shows possibly_paid count as a flagged overdue subset.
+- Disputed and possibly_paid counts are overdue subsets: both require due_date < today
+- Aging buckets: Current (not yet due), 1–7, 8–30, 31–60, 60+ days. SUM(overdue buckets) == total_overdue_amount. Current bucket excluded from overdue sum.
+- Amount serialization: all Decimal money fields → fixed 2-decimal strings ("0.00", "2500.00")
+
 **Open bugs (active):**
 - `routers/webhooks.py`: RESEND_WEBHOOK_SECRET exists in config but webhook does NOT verify signatures. Severity: High. Explicitly deferred from M4-ST1 — will be addressed in a dedicated sub-task.
 - ~~`main.py`: `GET /test-email` is publicly reachable~~ — RESOLVED in M4-ST1 Part 1. Endpoint deleted.
@@ -147,7 +156,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 > **Milestone 3: COMPLETE** — all 4/4 exit gates passed on 2026-03-22. 333 tests.
 >
 > **Milestone 4 is done when:**
-> - [ ] Dashboard shows current overdue picture at a glance
+> - [x] Dashboard shows current overdue picture at a glance
 > - [ ] Action queue displays prioritized work items
 > - [ ] Invoice and customer detail views are functional
 > - [x] Auth (email+password, bcrypt, JWT) protects all routes
@@ -264,6 +273,15 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Validation: backend 378/378 locally (370 existing + 5 preview + 3 router). Frontend tsc + build green. Full browser smoke test passed.
 - 378 tests at ST2 close
 
+**ST3 (dashboard with current overdue picture):**
+- `GET /dashboard` endpoint: typed Pydantic response with total overdue (includes possibly_paid), overdue today (live due_date math, not stored days_overdue), disputed/possibly_paid as overdue subsets, 5-bucket aging (Current, 1–7, 8–30, 31–60, 60+), top exposure customer, recent changes feed (overfetch 50 → filter → trim 15), last import, stale-data indicator (>24h)
+- Dashboard page replacing placeholder: wow-moment narrative strip, 4 summary cards, aging breakdown table, recent changes feed with per-action-type icons, last import footer, stale-data warning (default Alert + amber classes), empty state for no-import accounts
+- shadcn v3 Table component added manually (not via shadcn@latest)
+- Key invariants established: all overdue calculations use live date math (CURRENT_DATE - due_date), never stored days_overdue field. Total overdue includes possibly_paid (consistent with M3-ST2 doctrine). Payment Review card shows possibly_paid as flagged subset. Disputed/possibly_paid counts require due_date < today (true overdue subsets). Aging reconciliation: SUM(overdue buckets) == total_overdue_amount, Current bucket excluded. Amount serialization: fixed 2-decimal strings ("2500.00"). Activity feed filtered server-side for operator-relevant action_types only.
+- Key corrections: pending-import banner removed (no clean resume path), aging aligned to product-definition §2.4, possibly_paid included in headline total, overdue_today corrected from first_overdue_at to live due_date math, disputed/possibly_paid scoped as overdue subsets.
+- Validation: backend import OK, 20 dashboard tests passed, frontend tsc + build green.
+- 398 tests at ST3 close
+
 ## Decisions Made
 
 | # | Decision | Rationale | Date |
@@ -318,6 +336,10 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 48 | errors renamed to skipped_rows across import domain | ImportRecord column, confirm response, preview response, import_committed Activity details all use skipped_rows. Semantic clarity: these are non-blocking row-level skips (missing fields, invalid dates, duplicates), not blocking errors. Blocking failures raise ValueError and return 400/404. | 2026-03-24 |
 | 49 | Trust screen uses No longer in file wording for disappeared invoices | Neutral label. Does not imply paid, credited, or any other disposition. Per-disappeared-invoice disposition UX is explicitly deferred. | 2026-03-24 |
 | 50 | Cancel on trust screen means local navigation abandonment only | No backend discard/cleanup endpoint. Pending ImportRecord stays in pending_preview state. Orphaned pending imports are acceptable for v1. Lifecycle hygiene deferred. | 2026-03-24 |
+| 51 | Dashboard uses live date math, not stored days_overdue | Invoice.days_overdue is only updated during import commits and becomes stale between imports. Dashboard computes all overdue/aging from (CURRENT_DATE - due_date) in SQL. This pattern must be followed by any future feature that reads overdue status. | 2026-03-24 |
+| 52 | Total overdue includes possibly_paid; subset cards require due_date < today | possibly_paid remains outstanding until user-confirmed payment (M3-ST2 doctrine). Dashboard headline includes it. Payment Review card shows the subset. Both disputed_count and possibly_paid_count require due_date < today to be true overdue subsets. | 2026-03-24 |
+| 53 | Dashboard amount serialization: fixed 2-decimal strings | All Decimal money fields in the dashboard API response are serialized as fixed 2-decimal strings (e.g., "2500.00", "0.00") via Decimal.quantize(). Prevents floating-point drift and establishes a pinned API contract for frontend consumers. | 2026-03-24 |
+| 54 | Recent changes feed: overfetch → filter → trim | Dashboard fetches 50 activity candidates from DB, filters in Python (drops invoice_updated without meaningful change keys), returns first 15 retained. Prevents LIMIT-then-filter starvation. Meaningful change keys: outstanding_amount, due_date, status. | 2026-03-24 |
 
 ## Queued Items
 
