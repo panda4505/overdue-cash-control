@@ -15,12 +15,12 @@
 ## Current State
 
 - **Milestone:** 4 of 10 — IN PROGRESS
-- **Sub-task:** M4-ST1 COMPLETE (Part 1 backend + Part 2 frontend). M4-ST2 next.
-- **Status:** Backend 370 tests green. Frontend: auth bootstrap, login/register, onboarding, import mapping flow (upload → mapping → fuzzy decisions → review → confirm) landed and verified. shadcn/ui v3 + Tailwind 3 + sonner.
-- **Latest validation:** Backend 370/370 locally. Frontend: `npx tsc --noEmit` and `npm run build` passing. End-to-end browser smoke test passed (register, login, wrong-password error, onboarding, upload, mapping, confirm, dashboard).
+- **Sub-task:** M4-ST2 COMPLETE. M4-ST1 (Part 1 backend + Part 2 frontend) COMPLETE.
+- **Status:** Backend 378 tests green. Frontend: tsc + build green. Browser smoke green (trust screen load, Back/re-preview, template save, confirm, dashboard redirect all verified).
+- **Latest validation:** Full operator path tested: upload → mapping → fuzzy decisions → trust screen with diff data + money totals + anomalies + customer resolutions visible → confirm → dashboard. Malformed-source CSV incident during testing (Expected 15 fields in line 8, saw 16) was correct parser strictness, not an M4-ST2 defect.
 - **Blockers:** None
 - **Last session:** 2026-03-24
-- **Next:** M4-ST2 — Business diff preview endpoint + import trust screen. Framing pass required.
+- **Next:** M4-ST3 — Dashboard with current overdue picture. Framing pass required.
 
 ## Implementation Map
 
@@ -39,7 +39,7 @@
 **Models** (`models/`): 7 models — Account, User, Customer, Invoice, ImportRecord, ImportTemplate, Activity. All registered in `__init__.py` for Alembic. Key schema facts:
 - Invoice: 8 statuses (open/promised/disputed/paused/escalated/possibly_paid/recovered/closed), normalized_invoice_number for matching, data lineage fields (first_seen_import_id, last_updated_import_id), recovery tracking, 4 composite indexes
 - Customer: normalized_name for matching, merge_history JSONB, soft delete, cached aggregates (total_outstanding, invoice_count)
-- ImportRecord: change_set JSONB for rollback, scope_type (full_snapshot/partial/unknown), 4 invoice counters (created/updated/disappeared/unchanged), cost tracking
+- ImportRecord: change_set JSONB for rollback, scope_type (full_snapshot/partial/unknown), 4 invoice counters (created/updated/disappeared/unchanged), skipped_rows (renamed from errors in M4-ST2), cost tracking
 - Activity: flexible JSONB details, action_type enum-like string, 4 indexes
 
 **File parser** (`services/file_parser.py`): CSV/XLSX parser. Encoding detection (chardet + Western European fallback with mojibake rejection). Delimiter detection. Header row detection. Format-shaped numeric/date type inference (4 number patterns, European-first). Pure-integer ID protection. `.xls` rejected.
@@ -50,9 +50,14 @@
 
 **Normalization** (`services/normalization.py`): `normalize_invoice_number()` strips separators, lowercases. `normalize_customer_name()` strips EU legal suffixes (CZ/SK/DE/FR/IT/ES/EN), NFC-normalizes, lowercases. Dotless legal suffixes added for Czech (`sro`), Italian (`srl`, `spa`), and Spanish (`sl`) markets.
 
-**Import commit** (`services/import_commit.py`): Two-phase import lifecycle:
+**Import commit** (`services/import_commit.py`): Shared-planner import architecture with preview/confirm parity:
 - `create_pending_import()`: parse + save file to disk + create ImportRecord(pending_preview). Gates on parse success, not mapping success. Duplicate hash warning.
-- `confirm_import()`: Diff-aware reconciliation engine. Loads existing invoices by normalized_invoice_number. Classifies each file row as new/updated/unchanged. Disappeared invoices (absent from file) flagged as possibly_paid — **only when scope_type=full_snapshot**. Reappearing possibly_paid invoices always restored to open (even if data identical). Raw invoice_number immutable after first seen. Incoming-file duplicate and ambiguous existing-DB duplicate detection (warn-and-skip). Customer aggregates recalculated from DB post-loop (including reassigned invoice old customers). change_set tracks created/updated/disappeared for rollback. Per-invoice Activity for updated and disappeared. Customer resolution upgraded from exact-only to a deterministic-first chain: cache pre-check, then exact normalized name, merge_history alias reuse, VAT ID match, Jaro-Winkler ≥0.98 auto-merge with diacritic folding, user merge_decision for 0.70–0.98 range, else create new. merge_history reuse is deterministic (no duplicate events). In-memory matcher structures synced during row loop for same-import dedup and VAT backfill visibility. Fuzzy match preview in create_pending_import (best-effort).
+- `prepare_import_context()`: Shared preparation for preview and confirm. Loads ImportRecord, reparses file, validates mapping, loads existing invoices/customers, builds indexed lookup maps, converts ORM objects to frozen snapshot dataclasses, resolves merge_decisions. Returns ImportContext. Both preview and confirm call this — no duplicated preparation logic.
+- `build_import_plan()`: Pure classification on immutable snapshots. No ORM, no DB, no mutations. Iterates canonical rows, classifies each as new/updated/unchanged. Resolves customers via deterministic chain. Detects disappearances (scope_type=full_snapshot only). Computes invoice-level and customer-level anomalies in-memory. Returns ImportPlan dataclass. Both preview and confirm call this — no duplicated classification logic.
+- `preview_import()`: Calls prepare + plan, serializes to structured preview response with preview_generated_at timestamp. Zero DB mutations.
+- `_apply_import_plan()`: Applies an ImportPlan to the database. Creates customers/invoices from plan data, updates existing ORM objects, writes Activities, builds change_set. Uses resolve_customer_ref() to map placeholder IDs to real customer IDs — never re-runs matching or re-derives customer identity from display names.
+- `confirm_import()`: Calls prepare + plan + apply + commit. Returns summary response derived from the plan.
+- Preview anomaly serialization uses an explicit safe-detail allowlist (PREVIEW_ANOMALY_SAFE_DETAIL_KEYS) — placeholder IDs and internal identifiers are never exposed in the preview API response.
 
 **Customer matching** (`services/customer_matching.py`): Pure logic module, no DB dependency. `find_best_match()` shared by preview and confirm paths. `fold_diacritics()` for comparison-time accent stripping. `HIGH_THRESHOLD=0.98` (trust-first: only obvious typos auto-merge). `LOW_THRESHOLD=0.70` (below this, no match). Dataclasses: FileCustomer, ExistingCustomerInfo, MatchResult, FuzzyMatchResult.
 
@@ -62,17 +67,18 @@
 
 **Routers:**
 - `routers/upload.py`: `POST /upload` — auth-protected stateless preview (no DB write)
-- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/save-template` — persist confirmed mapping for reuse. `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Validated strictly — unknown customer IDs raise 400.
+- `routers/imports.py`: `POST /accounts/{account_id}/imports/upload` — account-scoped pending import + preview. `POST /imports/{import_id}/save-template` — persist confirmed mapping for reuse. `POST /imports/{import_id}/preview-diff` — business diff preview (structured plan without DB commit). `POST /imports/{import_id}/confirm` — commit to DB. `ConfirmImportRequest` has Literal-validated scope_type and optional `merge_decisions` dict. Both preview-diff and confirm use the same request body. Validated strictly — unknown customer IDs raise 400.
 - `routers/webhooks.py`: Resend inbound email webhook. Downloads attachments, feeds into ingestion pipeline.
 
 ### Database
 
-PostgreSQL 16 on Railway (managed). 3 Alembic migrations in repo:
+PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo:
 - `4a129036b96f`: initial 7 tables
 - `7d3f8c2b1a90`: replace number_format with decimal_separator + thousands_separator on import_templates
 - `a1b2c3d4e5f6`: company_name nullable, existing accounts updated to EUR/Europe/Paris
+- `8a7266974e1b`: rename errors to skipped_rows on import_records
 
-### Test suite (370 tests)
+### Test suite (378 tests)
 
 - `test_file_parser.py` — 86 tests: 5 CSV + 1 XLSX fixture, encoding fallback, edge cases
 - `test_column_mapper.py` — 48 tests: 6-language dictionary, template, LLM fallback, conflicts
@@ -80,8 +86,8 @@ PostgreSQL 16 on Railway (managed). 3 Alembic migrations in repo:
 - `test_upload.py` — 10 tests: CSV + XLSX upload, validation, response shape
 - `test_webhooks.py` — 10 tests: parity tests, webhook endpoint coverage
 - `test_normalization.py` — 24 tests: invoice number + customer name normalization, dotless suffixes
-- `test_import_commit.py` — 72 tests: pending import, confirm lifecycle, mapping validation, TestDiffEngine (16 diff scenarios), TestFuzzyMerge (17 fuzzy matching scenarios), TestAnomalyDetection (15 anomaly integration scenarios)
-- `test_imports_router.py` — 12 tests: upload/confirm endpoints, scope_type validation, merge_decisions contract
+- `test_import_commit.py` — 77 tests: pending import, confirm lifecycle, mapping validation, TestPreviewImport (5 preview tests: first-import-all-new, no-DB-mutation, subsequent-import-with-changes, parity-with-confirm, detects-anomalies), TestDiffEngine (16 diff scenarios), TestFuzzyMerge (17 fuzzy matching scenarios), TestAnomalyDetection (15 anomaly integration scenarios)
+- `test_imports_router.py` — 15 tests: upload/confirm/preview-diff endpoints, scope_type validation, merge_decisions contract
 - `test_customer_matching.py` — 33 tests: fold_diacritics, merge_history, VAT, Jaro-Winkler, qualifier near-collision guards, typo positive regression, normalization integration
 - `test_anomaly_detection.py` — 23 tests: pure logic module coverage for 5 anomaly types, thresholds, suppression rules, and serialization
 - `test_auth.py` — 22 tests: register/login/me/update account, protected routes, account isolation, `/test-email` removal
@@ -95,7 +101,7 @@ PostgreSQL 16 on Railway (managed). 3 Alembic migrations in repo:
 
 ### Frontend (`frontend/`)
 
-Next.js 14 + Tailwind CSS 3 + shadcn/ui v3 (New York, Zinc, HSL CSS variables) + sonner. Shared API client with explicit auth mode (required/none), scoped 401 handling. Auth context provider with resilient fetchMe. Login, register, onboarding, protected layout with sidebar nav. Import flow: upload → column mapping (14 canonical target fields, client-side validation mirroring backend rules) → fuzzy match decisions → review → save-template (explicit, optional) → confirm. Dashboard placeholder. Post-login routing based on company_name null check.
+Next.js 14 + Tailwind CSS 3 + shadcn/ui v3 (New York, Zinc, HSL CSS variables) + sonner. Shared API client with explicit auth mode (required/none), scoped 401 handling. Auth context provider with resilient fetchMe. Login, register, onboarding, protected layout with sidebar nav. Import flow: upload → column mapping (14 canonical target fields, client-side validation mirroring backend rules) → fuzzy match decisions → trust screen (business diff preview with summary cards, expandable detail sections, customer resolution visibility, anomaly display, template save) → confirm. Dashboard placeholder. Post-login routing based on company_name null check.
 
 ### Docs (`docs/`)
 
@@ -109,6 +115,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Preview-before-commit. Every import shows what will change before touching live data.
 - Deterministic-first AI. Saved templates and rules primary. LLM is fallback only.
 - confirm_import() is the single reconciliation/orchestration point for all import commits.
+- Preview/confirm parity through shared planner. preview_import() and confirm_import() share the same prepare_import_context() and build_import_plan() code paths. The planner operates on frozen snapshot dataclasses, not ORM objects. This is the approved architecture for business-diff preview before commit.
 
 **M3-ST2 operational constraints (carry forward):**
 - Disappeared invoices only flagged when scope_type == "full_snapshot"
@@ -144,7 +151,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 > - [ ] Action queue displays prioritized work items
 > - [ ] Invoice and customer detail views are functional
 > - [x] Auth (email+password, bcrypt, JWT) protects all routes
-> - [x] Import flow accessible from the UI (upload, preview, confirm)
+> - [x] Import flow accessible from the UI with trust screen (upload, mapping, fuzzy decisions, business diff preview, confirm)
 
 ## Milestone History
 
@@ -245,6 +252,18 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Validation: tsc + build passing. Browser smoke test passed end-to-end.
 - 370 backend tests unchanged (backend frozen for Part 2)
 
+**ST2 (business diff preview + trust screen):**
+- Shared-planner architecture: prepare_import_context() (shared preparation) + build_import_plan() (immutable, pure classification on frozen dataclasses) + preview_import() / confirm_import() both using the same prep+plan path
+- POST /imports/{id}/preview-diff endpoint returning structured diff: per-invoice line items for created/updated/disappeared, money totals, anomalies with sanitized details, customer resolution trust signals
+- _apply_import_plan() applies plan to DB without re-running matching. resolve_customer_ref() maps placeholder IDs to real customer IDs at commit time.
+- Frontend step 4 converted from metadata-only to trust screen: summary cards (counts + money totals), 5 expandable detail sections (new invoices, updated, no-longer-in-file, anomalies, customer resolutions), skipped-rows warning, duplicate warning, metadata footer. Template save preserved.
+- Alembic migration: errors renamed to skipped_rows on ImportRecord for semantic clarity
+- Preview anomaly serialization uses explicit safe-detail allowlist — no placeholder IDs or internal identifiers leak to the API
+- 4 GPT senior review iterations on framing (v1→v3-final). Key corrections: replaced rollback-based dry-run with shared planner architecture, added immutable snapshot boundary, tightened planner/apply identity contract, sanitized anomaly serialization, strengthened parity test assertions.
+- Malformed-source CSV incident during browser smoke testing (Expected 15 fields in line 8, saw 16): correct parser strictness rejecting a structurally bad source row, not a product bug.
+- Validation: backend 378/378 locally (370 existing + 5 preview + 3 router). Frontend tsc + build green. Full browser smoke test passed.
+- 378 tests at ST2 close
+
 ## Decisions Made
 
 | # | Decision | Rationale | Date |
@@ -294,6 +313,11 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 43 | Do not use shadcn@latest while repo is on Next.js 14 + Tailwind CSS 3 | shadcn@latest defaults to v4 which requires Tailwind 4. Discovered when Part 2 initial commit broke npm run build. Repair replaced v4 with manual shadcn v3. | 2026-03-24 |
 | 44 | Frontend auth uses explicit auth mode, not token-presence inference | apiFetch(path, options, auth) with "required" or "none". Prevents stale-token trap where login/register 401s trigger false session-expired redirects. | 2026-03-24 |
 | 45 | Mapping editor renders fixed target-field list, not just preview mappings | All 14 canonical fields shown with dropdowns, initialized from preview where matched. Prevents unmappable required fields when preview auto-detection misses them. | 2026-03-24 |
+| 46 | Shared-planner architecture for preview/confirm parity | preview_import() and confirm_import() share prepare_import_context() + build_import_plan(). Planner operates on frozen dataclasses (ExistingInvoiceSnapshot, ExistingCustomerSnapshot), not ORM objects. _apply_import_plan() uses plan data only — never re-runs matching. Parity test mandatory. Replaced earlier rollback-based dry-run proposal after GPT review identified db.commit() inside confirm_import() as a blocker. | 2026-03-24 |
+| 47 | Preview anomaly serialization uses explicit allowlist | _serialize_preview_anomaly() filters anomaly.details through PREVIEW_ANOMALY_SAFE_DETAIL_KEYS. Prevents placeholder customer IDs, internal invoice IDs, or other non-display-safe fields from leaking into the preview API response. | 2026-03-24 |
+| 48 | errors renamed to skipped_rows across import domain | ImportRecord column, confirm response, preview response, import_committed Activity details all use skipped_rows. Semantic clarity: these are non-blocking row-level skips (missing fields, invalid dates, duplicates), not blocking errors. Blocking failures raise ValueError and return 400/404. | 2026-03-24 |
+| 49 | Trust screen uses No longer in file wording for disappeared invoices | Neutral label. Does not imply paid, credited, or any other disposition. Per-disappeared-invoice disposition UX is explicitly deferred. | 2026-03-24 |
+| 50 | Cancel on trust screen means local navigation abandonment only | No backend discard/cleanup endpoint. Pending ImportRecord stays in pending_preview state. Orphaned pending imports are acceptable for v1. Lifecycle hygiene deferred. | 2026-03-24 |
 
 ## Queued Items
 
@@ -315,7 +339,10 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Low-confidence extraction / document rescue flow | Post-v1 (v1.2+) | Contingent on expanding v1 input boundary beyond CSV/XLSX. See opportunities.md. |
 | Future anomaly families | M4–M7 | Import-quality, data-integrity, identity, history/oscillation anomalies. See opportunities.md. |
 | Run Alembic migration on Railway production DB | ASAP | `a1b2c3d4e5f6` (nullable company_name, EUR/Paris defaults). Railway auto-deploys code but does NOT auto-run migrations. |
-| Business diff preview endpoint | M4-ST2 | Dry-run diff engine returning new/updated/disappeared/anomaly counts without committing. Required before real import preview screen. |
+| Pending import lifecycle hygiene (orphan cleanup) | Post-M4 | Cancel leaves ImportRecord in pending_preview. No cleanup endpoint yet. Acceptable for v1 single-user accounts. |
+| Humanized anomaly type labels in trust screen | M4 polish or M5 | Trust screen currently shows raw anomaly_type strings (cluster_risk, balance_increase). Future: human-readable labels. |
+| Scope label polish on trust screen | M4 polish or M5 | Footer can show Scope: Unknown. Future: contextual label or omit when unknown. |
+| Run Alembic migration 8a7266974e1b on Railway production DB | ASAP | errors -> skipped_rows rename. Railway does not auto-run migrations. |
 | Webhook signature verification | M4 (dedicated sub-task) | RESEND_WEBHOOK_SECRET exists but is not used. HIGH severity. Explicitly deferred from ST1. |
 
 ## Infrastructure
