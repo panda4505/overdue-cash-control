@@ -15,12 +15,12 @@
 ## Current State
 
 - **Milestone:** 4 of 10 — IN PROGRESS
-- **Sub-task:** M4-ST1 Part 1 (Backend) COMPLETE. M4-ST1 Part 2 (Frontend) next.
-- **Status:** Auth system, template persistence, account isolation, API hardening. 370 tests green (86 parser + 48 mapper + 15 ingestion + 10 upload + 10 webhooks + 24 normalization + 72 import commit + 12 imports router + 33 customer matching + 23 anomaly detection + 22 auth routes + 9 auth service + 6 template service). All endpoints auth-protected except health, root, auth, webhooks.
-- **Latest validation:** Full backend 370/370 locally. Zero regressions. Verified after Alembic migration applied to test DB.
+- **Sub-task:** M4-ST1 COMPLETE (Part 1 backend + Part 2 frontend). M4-ST2 next.
+- **Status:** Backend 370 tests green. Frontend: auth bootstrap, login/register, onboarding, import mapping flow (upload → mapping → fuzzy decisions → review → confirm) landed and verified. shadcn/ui v3 + Tailwind 3 + sonner.
+- **Latest validation:** Backend 370/370 locally. Frontend: `npx tsc --noEmit` and `npm run build` passing. End-to-end browser smoke test passed (register, login, wrong-password error, onboarding, upload, mapping, confirm, dashboard).
 - **Blockers:** None
-- **Last session:** 2026-03-23
-- **Next:** M4-ST1 Part 2 — Frontend app shell, login/register, onboarding, import trust flow screens. Backend is frozen for Part 2 unless frontend reveals a genuine API contract gap.
+- **Last session:** 2026-03-24
+- **Next:** M4-ST2 — Business diff preview endpoint + import trust screen. Framing pass required.
 
 ## Implementation Map
 
@@ -95,7 +95,7 @@ PostgreSQL 16 on Railway (managed). 3 Alembic migrations in repo:
 
 ### Frontend (`frontend/`)
 
-Next.js 14 + Tailwind CSS + shadcn/ui. Landing page only. No functional UI yet (M4).
+Next.js 14 + Tailwind CSS 3 + shadcn/ui v3 (New York, Zinc, HSL CSS variables) + sonner. Shared API client with explicit auth mode (required/none), scoped 401 handling. Auth context provider with resilient fetchMe. Login, register, onboarding, protected layout with sidebar nav. Import flow: upload → column mapping (14 canonical target fields, client-side validation mirroring backend rules) → fuzzy match decisions → review → save-template (explicit, optional) → confirm. Dashboard placeholder. Post-login routing based on company_name null check.
 
 ### Docs (`docs/`)
 
@@ -144,7 +144,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 > - [ ] Action queue displays prioritized work items
 > - [ ] Invoice and customer detail views are functional
 > - [x] Auth (email+password, bcrypt, JWT) protects all routes
-> - [ ] Import flow accessible from the UI (upload, preview, confirm)
+> - [x] Import flow accessible from the UI (upload, preview, confirm)
 
 ## Milestone History
 
@@ -234,6 +234,17 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 - Validation: full backend 370/370 locally. Zero regressions. Two commits: main ST1 slice + mock signature fix.
 - 370 tests at ST1 Part 1 close
 
+**ST1 Part 2 (frontend auth + onboarding + import mapping flow):**
+- App shell: protected layout, sidebar nav, auth-gated routing
+- Auth: shared API client with explicit auth mode (required/none), scoped 401 handling, session-expired toast. Login/register use auth:"none" so backend errors surface directly. fetchMe resilient to transient errors.
+- Onboarding: company_name → PATCH /auth/account → /imports/new
+- Import flow: upload (CSV/TSV/XLSX) → mapping (14 canonical fields, required-field + duplicate-source validation) → fuzzy decisions (auto_merges informational, candidates actionable) → review → optional save-template → confirm → dashboard
+- Mapping transforms preview array to { target_field: source_column } dict
+- Handles null/absent fuzzy_matches, null import_id, optional applied_template, null resend_inbound_address
+- shadcn v4 / Tailwind 3 incompatibility: initial commit (04f07cc) used shadcn@latest which pulled v4. npm run build failed. Repair commit (388b293) replaced v4 with manual shadcn v3 components. No business logic changes in repair.
+- Validation: tsc + build passing. Browser smoke test passed end-to-end.
+- 370 backend tests unchanged (backend frozen for Part 2)
+
 ## Decisions Made
 
 | # | Decision | Rationale | Date |
@@ -280,6 +291,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 40 | Template auto-apply: exact header-set match, one-candidate rule | Normalized set of mapped source columns must exactly equal normalized file headers. Compatible delimiter/decimal_separator when both non-null. Exactly one template must match. Intentionally strict — loosened later with evidence if needed. | 2026-03-23 |
 | 41 | bcrypt pinned to 4.1.3 for passlib compatibility | passlib 1.7.4 crashes against bcrypt 5.x on Python 3.14. Pin discovered during Codex verification. | 2026-03-23 |
 | 42 | ST1 preview contract is parse/mapping only | create_pending_import() returns IngestionResult preview, duplicate warning, fuzzy matches. Does NOT return business diff (new/updated/disappeared/anomalies). Business diff preview endpoint deferred to M4-ST2. Frontend must present ST1 preview as mapping review, not business-change preview. | 2026-03-23 |
+| 43 | Do not use shadcn@latest while repo is on Next.js 14 + Tailwind CSS 3 | shadcn@latest defaults to v4 which requires Tailwind 4. Discovered when Part 2 initial commit broke npm run build. Repair replaced v4 with manual shadcn v3. | 2026-03-24 |
+| 44 | Frontend auth uses explicit auth mode, not token-presence inference | apiFetch(path, options, auth) with "required" or "none". Prevents stale-token trap where login/register 401s trigger false session-expired redirects. | 2026-03-24 |
+| 45 | Mapping editor renders fixed target-field list, not just preview mappings | All 14 canonical fields shown with dropdowns, initialized from preview where matched. Prevents unmappable required fields when preview auto-detection misses them. | 2026-03-24 |
 
 ## Queued Items
 
