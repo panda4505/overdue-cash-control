@@ -73,7 +73,7 @@
 
 ### Database
 
-PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo:
+PostgreSQL 16 on Railway (managed). 4 Alembic migrations in repo (all applied to production as of 2026-03-25):
 - `4a129036b96f`: initial 7 tables
 - `7d3f8c2b1a90`: replace number_format with decimal_separator + thousands_separator on import_templates
 - `a1b2c3d4e5f6`: company_name nullable, existing accounts updated to EUR/Europe/Paris
@@ -361,11 +361,9 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Import quality intelligence (CSV/XLSX paths) | M4–M7 | Detect shaky imports: abnormal skip rates, duplicate rates, low-confidence mapping. Surface exact problematic rows. See opportunities.md. |
 | Low-confidence extraction / document rescue flow | Post-v1 (v1.2+) | Contingent on expanding v1 input boundary beyond CSV/XLSX. See opportunities.md. |
 | Future anomaly families | M4–M7 | Import-quality, data-integrity, identity, history/oscillation anomalies. See opportunities.md. |
-| Run Alembic migration on Railway production DB | ASAP | `a1b2c3d4e5f6` (nullable company_name, EUR/Paris defaults). Railway auto-deploys code but does NOT auto-run migrations. |
 | Pending import lifecycle hygiene (orphan cleanup) | Post-M4 | Cancel leaves ImportRecord in pending_preview. No cleanup endpoint yet. Acceptable for v1 single-user accounts. |
 | Humanized anomaly type labels in trust screen | M4 polish or M5 | Trust screen currently shows raw anomaly_type strings (cluster_risk, balance_increase). Future: human-readable labels. |
 | Scope label polish on trust screen | M4 polish or M5 | Footer can show Scope: Unknown. Future: contextual label or omit when unknown. |
-| Run Alembic migration 8a7266974e1b on Railway production DB | ASAP | errors -> skipped_rows rename. Railway does not auto-run migrations. |
 | Webhook signature verification | M4 (dedicated sub-task) | RESEND_WEBHOOK_SECRET exists but is not used. HIGH severity. Explicitly deferred from ST1. |
 
 ## Infrastructure
@@ -377,6 +375,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | Railway frontend | ✅ | https://noble-possibility-production.up.railway.app |
 | Frontend Docker env | ✅ | ARG NEXT_PUBLIC_API_URL injected at build stage so Next.js inlines it during `npm run build` |
 | Railway PostgreSQL | ✅ | Attached to backend, /health reports db=connected |
+| Alembic migrations | ✅ | All 4 migrations applied to production (2026-03-25). Schema is up to date. |
 | OpenAI + DeepSeek keys | ✅ | Configured in Railway env vars |
 | Resend | ✅ | overduecash.com verified, inbound via tuaentoocl.resend.app |
 | Cloudflare | ✅ | DNS for overduecash.com, auto-configured DKIM/SPF |
