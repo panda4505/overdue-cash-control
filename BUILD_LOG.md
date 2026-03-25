@@ -340,6 +340,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | 52 | Total overdue includes possibly_paid; subset cards require due_date < today | possibly_paid remains outstanding until user-confirmed payment (M3-ST2 doctrine). Dashboard headline includes it. Payment Review card shows the subset. Both disputed_count and possibly_paid_count require due_date < today to be true overdue subsets. | 2026-03-24 |
 | 53 | Dashboard amount serialization: fixed 2-decimal strings | All Decimal money fields in the dashboard API response are serialized as fixed 2-decimal strings (e.g., "2500.00", "0.00") via Decimal.quantize(). Prevents floating-point drift and establishes a pinned API contract for frontend consumers. | 2026-03-24 |
 | 54 | Recent changes feed: overfetch → filter → trim | Dashboard fetches 50 activity candidates from DB, filters in Python (drops invoice_updated without meaningful change keys), returns first 15 retained. Prevents LIMIT-then-filter starvation. Meaningful change keys: outstanding_amount, due_date, status. | 2026-03-24 |
+| 55 | Dockerfile ARG for NEXT_PUBLIC_API_URL | Next.js inlines NEXT_PUBLIC_* at build time. Docker build stage has no access to Railway service env vars unless declared via ARG. Added ARG + ENV before `npm run build` in frontend/Dockerfile. | 2026-03-25 |
 
 ## Queued Items
 
@@ -374,6 +375,7 @@ architecture.md, constitution.md, product-definition.md, trajectory.md, wedge-v1
 | GitHub | ✅ | https://github.com/panda4505/overdue-cash-control |
 | Railway backend | ✅ | https://overdue-cash-control-production.up.railway.app |
 | Railway frontend | ✅ | https://noble-possibility-production.up.railway.app |
+| Frontend Docker env | ✅ | ARG NEXT_PUBLIC_API_URL injected at build stage so Next.js inlines it during `npm run build` |
 | Railway PostgreSQL | ✅ | Attached to backend, /health reports db=connected |
 | OpenAI + DeepSeek keys | ✅ | Configured in Railway env vars |
 | Resend | ✅ | overduecash.com verified, inbound via tuaentoocl.resend.app |
